@@ -222,8 +222,35 @@ def _cmd_help() -> str:
         "💰 ยอด — ยอดรวมรายรับและรายจ่าย\n"
         "📂 เดือนนี้ — แยกหมวดหมู่รายจ่าย\n"
         "🔍 วิเคราะห์ — วิเคราะห์การใช้จ่ายและคำแนะนำ\n"
-        "📄 ส่งไฟล์ PDF — อัปโหลด statement อัตโนมัติ\n\n"
+        "📄 ส่งไฟล์ PDF — อัปโหลด statement อัตโนมัติ\n"
+        "📖 วิธีใช้ — คู่มือใช้งานแบบละเอียด\n\n"
         f"🌐 เข้าใช้งานเว็บ:\n{APP_URL}"
+    )
+
+
+def _cmd_tutorial() -> str:
+    """Step-by-step tutorial for new users."""
+    return (
+        "📖 วิธีใช้ MoneyMind Bot\n"
+        "━━━━━━━━━━━━━━━\n\n"
+        "1️⃣  ดาวน์โหลด Statement PDF\n"
+        "      เปิดแอปธนาคาร → เมนู Statement\n"
+        "      เลือกเดือนที่ต้องการ → ดาวน์โหลด PDF\n\n"
+        "      ✅ ธนาคารที่รองรับ:\n"
+        "         • กสิกรไทย (K PLUS)\n"
+        "         • ไทยพาณิชย์ (SCB Easy)\n"
+        "         • กรุงไทย (Krungthai NEXT)\n"
+        "         • ออมสิน (MyMo)\n\n"
+        "2️⃣  ส่งไฟล์ PDF เข้าแชทนี้\n"
+        "      กด ➕ ที่ช่องพิมพ์ → เลือกไฟล์\n"
+        "      ผมจะอ่าน + จัดหมวดหมู่ให้อัตโนมัติ ⚡\n\n"
+        "3️⃣  ถามผมได้ทุกเรื่อง\n"
+        "      💬 \"สรุป\" → ดูยอดเดือนนี้\n"
+        "      💬 \"เดือนนี้\" → แยกหมวดหมู่\n"
+        "      💬 \"วิเคราะห์\" → คำแนะนำประหยัด\n\n"
+        "━━━━━━━━━━━━━━━\n"
+        "💡 Tip: พิมพ์ \"ช่วย\" ดูคำสั่งทั้งหมด\n\n"
+        f"🌐 เว็บแอป:\n{APP_URL}"
     )
 
 
@@ -295,7 +322,11 @@ def _handle_pdf(reply_token: str, message_id: str, user: User) -> None:
             f"✅ นำเข้าสำเร็จครับ!\n"
             f"ธนาคาร: {bank_name}\n"
             f"จำนวน: {len(txs)} รายการ\n\n"
-            f"พิมพ์ 'สรุป' เพื่อดูยอดได้เลยครับ 📊",
+            f"━━━━━━━━━━━━━━━\n"
+            f"ลองพิมพ์ดูครับ:\n"
+            f"  📊 \"สรุป\" — ดูยอดรับ-จ่าย\n"
+            f"  📂 \"เดือนนี้\" — แยกหมวดหมู่\n"
+            f"  🔍 \"วิเคราะห์\" — คำแนะนำประหยัด",
         )
 
     except Exception as exc:
@@ -319,12 +350,17 @@ def on_follow(event: FollowEvent):
     _get_or_create_user(line_user_id, display_name)
     _reply(
         event.reply_token,
-        f"สวัสดีครับ {display_name or 'คุณ'} 👋\n\n"
-        "ยินดีต้อนรับสู่ MoneyMind Bot!\n"
-        "ผมช่วยวิเคราะห์การใช้จ่ายของคุณได้ครับ\n\n"
-        "พิมพ์ 'ช่วย' เพื่อดูคำสั่งทั้งหมด หรือ\n"
-        "ส่งไฟล์ PDF statement มาเลยครับ 📄\n\n"
-        f"🌐 เว็บแอป: {APP_URL}",
+        f"สวัสดีครับ {display_name or 'คุณ'} 👋\n"
+        "ยินดีต้อนรับสู่ MoneyMind Bot!\n\n"
+        "ผมเป็นผู้ช่วยจัดการการเงินส่วนตัว\n"
+        "ที่จะช่วยคุณ:\n"
+        "  ✓ อ่าน statement PDF อัตโนมัติ\n"
+        "  ✓ จัดหมวดหมู่รายจ่ายให้\n"
+        "  ✓ สรุป + วิเคราะห์การใช้เงิน\n\n"
+        "🚀 เริ่มต้นง่ายๆ:\n"
+        "พิมพ์ \"วิธีใช้\" เพื่อดูคู่มือ\n"
+        "หรือส่งไฟล์ PDF statement มาได้เลย 📄\n\n"
+        f"🌐 เว็บแอป:\n{APP_URL}",
     )
 
 
@@ -349,6 +385,7 @@ def on_text(event: MessageEvent):
         ("เดือนนี้", "thismonth", "this month", "หมวด", "หมวดหมู่"): lambda: _cmd_categories(user.id),
         ("วิเคราะห์", "analyze", "analyse", "analysis"): lambda: _cmd_analyze(user.id),
         ("ช่วย", "help", "คำสั่ง", "?"): lambda: _cmd_help(),
+        ("วิธีใช้", "เริ่ม", "เริ่มต้น", "tutorial", "guide", "start", "เริ่มใช้งาน"): lambda: _cmd_tutorial(),
     }
 
     for keywords, fn in COMMANDS.items():
@@ -356,11 +393,25 @@ def on_text(event: MessageEvent):
             _reply(event.reply_token, fn())
             return
 
-    # Default: suggest help
-    _reply(
-        event.reply_token,
-        "ไม่เข้าใจคำสั่งครับ 😅\nพิมพ์ 'ช่วย' เพื่อดูคำสั่งที่ใช้ได้นะครับ",
-    )
+    # Default: friendly suggestion based on whether user has any transactions yet
+    has_data = bool(_month_transactions(user.id))
+    if has_data:
+        _reply(
+            event.reply_token,
+            "ไม่เข้าใจคำสั่งครับ 😅\n\n"
+            "ลองพิมพ์:\n"
+            "  💬 \"สรุป\" — ดูยอดเดือนนี้\n"
+            "  💬 \"วิเคราะห์\" — ดูคำแนะนำ\n"
+            "  💬 \"ช่วย\" — ดูคำสั่งทั้งหมด",
+        )
+    else:
+        _reply(
+            event.reply_token,
+            "สวัสดีครับ 👋\n\n"
+            "ดูเหมือนคุณยังไม่ได้เริ่มใช้งาน\n"
+            "พิมพ์ \"วิธีใช้\" เพื่อดูคู่มือเริ่มต้นครับ 📖\n\n"
+            "หรือส่งไฟล์ PDF statement มาได้เลย 📄",
+        )
 
 
 @handler.add(MessageEvent, message=FileMessageContent)
