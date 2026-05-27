@@ -36,10 +36,15 @@ from linebot.v3.messaging import (
     TextMessage,
 )
 from linebot.v3.webhooks import (
+    AudioMessageContent,
     FileMessageContent,
     FollowEvent,
+    ImageMessageContent,
+    LocationMessageContent,
     MessageEvent,
+    StickerMessageContent,
     TextMessageContent,
+    VideoMessageContent,
 )
 
 from backend.db import SessionLocal
@@ -69,13 +74,72 @@ def _blob_api() -> MessagingApiBlob:
 
 # ─── Helpers ───────────────────────────────────────────────────────────────
 
-def _reply(reply_token: str, text: str) -> None:
+def _reply(reply_token: str, text) -> None:
+    """Reply with one text message, or a list of texts (up to 5)."""
+    if isinstance(text, str):
+        msgs = [TextMessage(text=text)]
+    else:
+        msgs = [TextMessage(text=t) for t in text[:5]]
     _api().reply_message(
-        ReplyMessageRequest(
-            reply_token=reply_token,
-            messages=[TextMessage(text=text)],
-        )
+        ReplyMessageRequest(reply_token=reply_token, messages=msgs)
     )
+
+
+# ─── Shared intro / onboarding messages ────────────────────────────────────
+
+def _full_intro(display_name: str = "") -> list[str]:
+    """Comprehensive onboarding: welcome + tutorial + commands.
+
+    Returns a list of 2 messages so LINE can show them as separate bubbles
+    (better mobile UX than one giant wall of text).
+    """
+    name = display_name or "คุณ"
+
+    welcome_and_tutorial = (
+        f"สวัสดีครับ {name} 👋\n"
+        "ยินดีต้อนรับสู่ MoneyMind Bot!\n\n"
+        "ผมเป็นผู้ช่วยจัดการการเงินส่วนตัว\n"
+        "ช่วย:\n"
+        "  ✓ อ่าน Statement PDF อัตโนมัติ\n"
+        "  ✓ จัดหมวดหมู่รายจ่ายให้\n"
+        "  ✓ สรุป + วิเคราะห์การใช้เงิน\n\n"
+        "━━━━━━━━━━━━━━━\n"
+        "📖 วิธีใช้ 3 ขั้นตอน\n"
+        "━━━━━━━━━━━━━━━\n\n"
+        "1️⃣  ดาวน์โหลด Statement PDF\n"
+        "      จากแอปธนาคาร → เมนู Statement\n"
+        "      ✅ รองรับ:\n"
+        "         • กสิกรไทย (K PLUS)\n"
+        "         • ไทยพาณิชย์ (SCB Easy)\n"
+        "         • กรุงไทย (Krungthai NEXT)\n"
+        "         • ออมสิน (MyMo)\n\n"
+        "2️⃣  ส่งไฟล์ PDF เข้าแชทนี้\n"
+        "      กด ➕ ที่ช่องพิมพ์ → เลือกไฟล์\n"
+        "      ผมจะอ่าน + จัดหมวดหมู่ให้อัตโนมัติ ⚡\n\n"
+        "3️⃣  ถามผมได้ทุกเรื่อง\n"
+        "      พิมพ์คำสั่งดูข้อความถัดไป 👇"
+    )
+
+    commands = (
+        "🎯 คำสั่ง MoneyMind Bot ที่ใช้ได้\n"
+        "━━━━━━━━━━━━━━━\n\n"
+        "📊 \"สรุป\"\n"
+        "      สรุปยอดรับ-จ่ายเดือนนี้\n\n"
+        "💰 \"ยอด\"\n"
+        "      ยอดรวมรายรับและรายจ่าย\n\n"
+        "📂 \"เดือนนี้\"\n"
+        "      แยกหมวดหมู่รายจ่าย\n\n"
+        "🔍 \"วิเคราะห์\"\n"
+        "      Top 3 หมวด + คำแนะนำประหยัด\n\n"
+        "📖 \"วิธีใช้\"\n"
+        "      แสดงคู่มือนี้อีกครั้ง\n\n"
+        "📄 ส่งไฟล์ PDF\n"
+        "      อัปโหลด Statement อัตโนมัติ\n\n"
+        "━━━━━━━━━━━━━━━\n"
+        f"🌐 เว็บแอป:\n{APP_URL}"
+    )
+
+    return [welcome_and_tutorial, commands]
 
 
 def _get_or_create_user(line_user_id: str, display_name: str) -> User:
@@ -348,20 +412,8 @@ def on_follow(event: FollowEvent):
         pass
 
     _get_or_create_user(line_user_id, display_name)
-    _reply(
-        event.reply_token,
-        f"สวัสดีครับ {display_name or 'คุณ'} 👋\n"
-        "ยินดีต้อนรับสู่ MoneyMind Bot!\n\n"
-        "ผมเป็นผู้ช่วยจัดการการเงินส่วนตัว\n"
-        "ที่จะช่วยคุณ:\n"
-        "  ✓ อ่าน statement PDF อัตโนมัติ\n"
-        "  ✓ จัดหมวดหมู่รายจ่ายให้\n"
-        "  ✓ สรุป + วิเคราะห์การใช้เงิน\n\n"
-        "🚀 เริ่มต้นง่ายๆ:\n"
-        "พิมพ์ \"วิธีใช้\" เพื่อดูคู่มือ\n"
-        "หรือส่งไฟล์ PDF statement มาได้เลย 📄\n\n"
-        f"🌐 เว็บแอป:\n{APP_URL}",
-    )
+    # Send full intro: welcome + tutorial + commands (as 2 bubbles)
+    _reply(event.reply_token, _full_intro(display_name))
 
 
 @handler.add(MessageEvent, message=TextMessageContent)
@@ -393,25 +445,9 @@ def on_text(event: MessageEvent):
             _reply(event.reply_token, fn())
             return
 
-    # Default: friendly suggestion based on whether user has any transactions yet
-    has_data = bool(_month_transactions(user.id))
-    if has_data:
-        _reply(
-            event.reply_token,
-            "ไม่เข้าใจคำสั่งครับ 😅\n\n"
-            "ลองพิมพ์:\n"
-            "  💬 \"สรุป\" — ดูยอดเดือนนี้\n"
-            "  💬 \"วิเคราะห์\" — ดูคำแนะนำ\n"
-            "  💬 \"ช่วย\" — ดูคำสั่งทั้งหมด",
-        )
-    else:
-        _reply(
-            event.reply_token,
-            "สวัสดีครับ 👋\n\n"
-            "ดูเหมือนคุณยังไม่ได้เริ่มใช้งาน\n"
-            "พิมพ์ \"วิธีใช้\" เพื่อดูคู่มือเริ่มต้นครับ 📖\n\n"
-            "หรือส่งไฟล์ PDF statement มาได้เลย 📄",
-        )
+    # Default: send the full intro (welcome + tutorial + commands)
+    # so users always see how to use the bot regardless of what they type.
+    _reply(event.reply_token, _full_intro(display_name))
 
 
 @handler.add(MessageEvent, message=FileMessageContent)
@@ -439,3 +475,57 @@ def on_file(event: MessageEvent):
 
     _reply(event.reply_token, "⏳ กำลังอ่านข้อมูลครับ...")
     _handle_pdf(event.reply_token, file_msg.id, user)
+
+
+# ─── Fallback handlers — sticker, image, video, audio, location ────────────
+# When user sends non-text, non-file content, still reply with the intro so
+# they understand how to use the bot instead of seeing the bot stay silent.
+
+def _generic_intro_reply(event: MessageEvent) -> None:
+    line_user_id = event.source.user_id
+    display_name = ""
+    try:
+        profile = _api().get_profile(line_user_id)
+        display_name = profile.display_name or ""
+    except Exception:
+        pass
+    _get_or_create_user(line_user_id, display_name)
+    _reply(event.reply_token, _full_intro(display_name))
+
+
+@handler.add(MessageEvent, message=StickerMessageContent)
+def on_sticker(event: MessageEvent):
+    _generic_intro_reply(event)
+
+
+@handler.add(MessageEvent, message=ImageMessageContent)
+def on_image(event: MessageEvent):
+    line_user_id = event.source.user_id
+    display_name = ""
+    try:
+        profile = _api().get_profile(line_user_id)
+        display_name = profile.display_name or ""
+    except Exception:
+        pass
+    _get_or_create_user(line_user_id, display_name)
+    # Hint: images of statements need to be PDF, not photo
+    _reply(event.reply_token, [
+        "ขออภัยครับ รูปภาพยังไม่รองรับ 📷\n"
+        "กรุณาส่งเป็นไฟล์ PDF จากแอปธนาคารแทนนะครับ 📄",
+        *_full_intro(display_name),
+    ])
+
+
+@handler.add(MessageEvent, message=VideoMessageContent)
+def on_video(event: MessageEvent):
+    _generic_intro_reply(event)
+
+
+@handler.add(MessageEvent, message=AudioMessageContent)
+def on_audio(event: MessageEvent):
+    _generic_intro_reply(event)
+
+
+@handler.add(MessageEvent, message=LocationMessageContent)
+def on_location(event: MessageEvent):
+    _generic_intro_reply(event)
