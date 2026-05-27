@@ -178,23 +178,6 @@ function Login({ lang, onLogin, goRegister, goForgot }) {
             {!busy && Ic.arrow}
           </button>
 
-          <div className="auth-divider">{lang === 'th' ? 'หรือเข้าด้วย' : 'or continue with'}</div>
-
-          <div className="auth-social">
-            <button type="button" className="btn" onClick={() => social('google')} disabled={busy || socialBusy}>
-              <span style={{ width: 16, height: 16, display: 'inline-block' }}>
-                {socialBusy === 'google' ? <Spinner /> : Ic.google}
-              </span>
-              {socialBusy === 'google' ? (lang === 'th' ? 'กำลังเข้า...' : 'Connecting…') : 'Google'}
-            </button>
-            <button type="button" className="btn" onClick={() => social('apple')} disabled={busy || socialBusy}>
-              <span style={{ width: 16, height: 16, display: 'inline-block' }}>
-                {socialBusy === 'apple' ? <Spinner /> : Ic.apple}
-              </span>
-              {socialBusy === 'apple' ? (lang === 'th' ? 'กำลังเข้า...' : 'Connecting…') : 'Apple'}
-            </button>
-          </div>
-
           <div className="auth-foot">
             {lang === 'th' ? 'ยังไม่มีบัญชี? ' : "Don't have an account? "}
             <span className="auth-link" onClick={goRegister}>
