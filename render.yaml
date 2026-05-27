@@ -1,0 +1,25 @@
+# Render Blueprint for MoneyMind
+# Docs: https://render.com/docs/blueprint-spec
+#
+# After connecting this repo on render.com, Render reads this file and
+# provisions the service automatically.
+
+services:
+  - type: web
+    name: moneymind
+    runtime: python
+    plan: free
+    region: singapore       # closest to Thailand
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn backend.app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
+      - key: LINE_CHANNEL_SECRET
+        sync: false         # set manually in Render dashboard (never in repo)
+      - key: LINE_CHANNEL_ACCESS_TOKEN
+        sync: false         # set manually in Render dashboard
+      - key: DATABASE_URL
+        sync: false         # set manually (e.g. Supabase Postgres URL)

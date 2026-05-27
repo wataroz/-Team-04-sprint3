@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=1440, initial-scale=1" />
+  <title>MoneyMind — AI Financial Co-pilot</title>
+  <!-- Styling lives in the ux_ui/ folder, mounted at /ui by Flask -->
+  <link rel="stylesheet" href="/ui/styles.css" />
+</head>
+<body style="background-color: rgb(10, 10, 11)">
+  <div id="root"></div>
+
+  <!-- React + Babel (pinned) -->
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous"></script>
+
+  <!-- frontend/  — app data + state + pages -->
+  <script src="/fe/src/data.js"></script>
+
+  <!-- ux_ui/  — primitives, icons, theme tweaks (must load before views/app use them) -->
+  <script type="text/babel" src="/ui/src/tweaks-panel.jsx"></script>
+  <script type="text/babel" src="/ui/src/ui.jsx"></script>
+
+  <!-- frontend/  — views, auth, app shell -->
+  <script type="text/babel" src="/fe/src/views.jsx"></script>
+  <script type="text/babel" src="/fe/src/auth.jsx"></script>
+  <script type="text/babel" src="/fe/src/app.jsx"></script>
+</body>
+</html>

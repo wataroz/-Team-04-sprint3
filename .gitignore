@@ -1,0 +1,54 @@
+# ─── Secrets — NEVER commit ─────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# ─── Database (local data) ──────────────────────────────────────────────────
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# ─── Private uploads / real bank statements ────────────────────────────────
+# These contain real PII / financial data — NEVER push to public repo
+design_pkg/moneymind/project/uploads/
+uploads/
+*.pdf
+# (Allow committing public PDFs by removing pattern above + adding explicit !file.pdf)
+
+# ─── Development bundles & original design package ─────────────────────────
+# design_pkg/ is the original Claude.ai design bundle — kept locally for
+# reference, NOT pushed (may contain chat history with personal context).
+design_pkg/
+*.tar.gz
+*.zip
+
+# ─── Python ─────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+env/
+
+# ─── Node (if added later) ──────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+
+# ─── Tooling / IDE ──────────────────────────────────────────────────────────
+.claude/
+.vscode/
+.idea/
+*.swp
+
+# ─── OS ─────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
