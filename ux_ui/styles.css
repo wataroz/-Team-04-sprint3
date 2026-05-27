@@ -2497,3 +2497,188 @@ body::after {
   margin: 0;
   text-wrap: pretty;
 }
+
+
+/* ============================================================
+   RESPONSIVE — Mobile, Tablet, Desktop overrides
+   Breakpoints:
+     Desktop  : 1025px+    (notebook, PC)
+     Tablet   :  768-1024  (iPad)
+     Mobile   :  481- 767  (phones)
+     Tiny     :  ≤ 480     (small phones)
+   ============================================================ */
+
+/* Safe-area for notch (iPhone X+) */
+html, body {
+  overflow-x: hidden;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* ─── TABLET & MOBILE (≤ 1024px) ─────────────────────────────── */
+@media (max-width: 1024px) {
+  /* Auth hero side panel — hide on tablet/mobile, show form only */
+  .auth-hero { display: none !important; }
+  .auth-shell { grid-template-columns: 1fr !important; }
+  .auth-form-wrap { padding: 40px 24px !important; min-height: 100vh; }
+
+  /* Auth quote scaling */
+  .auth-quote-text { font-size: clamp(28px, 5vw, 42px); }
+  .auth-quote-mark { font-size: clamp(56px, 8vw, 80px); }
+
+  /* Hero balance text */
+  .hero-balance { font-size: clamp(48px, 9vw, 88px) !important; }
+
+  /* App shell: collapse sidebar */
+  .app-shell { grid-template-columns: 1fr !important; }
+  .sidebar {
+    position: fixed !important;
+    bottom: 0; left: 0; right: 0; top: auto !important;
+    flex-direction: row !important;
+    height: auto !important;
+    padding: 8px env(safe-area-inset-right) calc(8px + env(safe-area-inset-bottom)) env(safe-area-inset-left) !important;
+    border-right: none !important;
+    border-top: 1px solid var(--line) !important;
+    z-index: 100;
+    background: rgba(10,10,11,0.96);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+  .sidebar-header, .sidebar-footer { display: none !important; }
+  .sidebar-nav {
+    flex-direction: row !important;
+    flex: 1;
+    justify-content: space-around;
+    gap: 4px !important;
+    padding: 0 !important;
+    overflow-x: auto;
+  }
+  .nav-item {
+    flex-direction: column !important;
+    gap: 4px !important;
+    padding: 8px 6px !important;
+    font-size: 10px !important;
+    min-width: 56px;
+    flex: 0 0 auto;
+  }
+  .nav-item-label { font-size: 10px !important; }
+
+  /* Main content padding to clear bottom nav */
+  .main-content, .page-content {
+    padding-bottom: 80px !important;
+  }
+
+  /* Page padding tighter */
+  .page-header, .page-body { padding-left: 20px !important; padding-right: 20px !important; }
+
+  /* Grids stack */
+  .kpi-grid, .summary-grid, .budget-summary-grid {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 12px !important;
+  }
+  .dashboard-grid, .insights-grid {
+    grid-template-columns: 1fr !important;
+    gap: 16px !important;
+  }
+
+  /* Card padding tighter */
+  .card, .ai-hero, .hero { padding: 20px !important; }
+
+  /* Tables: horizontal scroll */
+  .table-wrap, .tx-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+  /* Tweaks panel as bottom sheet */
+  .tweaks-panel {
+    width: 100% !important;
+    right: 0 !important;
+    border-radius: 24px 24px 0 0 !important;
+  }
+
+  /* Modals full-width */
+  .modal { width: calc(100% - 24px) !important; max-width: 540px; }
+}
+
+/* ─── MOBILE ONLY (≤ 767px) ──────────────────────────────────── */
+@media (max-width: 767px) {
+  /* KPI tiles stack to single column on small phones */
+  .kpi-grid { grid-template-columns: 1fr !important; }
+
+  /* Smaller hero numbers */
+  .hero-balance { font-size: clamp(40px, 12vw, 64px) !important; }
+  .ai-hero-title { font-size: clamp(20px, 5vw, 28px) !important; }
+
+  /* Section titles */
+  .page-title { font-size: clamp(22px, 6vw, 32px) !important; }
+  .section-title { font-size: 16px !important; }
+
+  /* Topbar */
+  .topbar { padding: 12px 16px !important; }
+  .topbar-search { display: none !important; }
+
+  /* Upload area */
+  .upload-zone { padding: 28px 16px !important; min-height: 200px !important; }
+  .upload-title { font-size: 18px !important; }
+
+  /* Tx table — convert to card list on phone */
+  .tx-table thead { display: none; }
+  .tx-table, .tx-table tbody, .tx-table tr, .tx-table td { display: block; width: 100%; }
+  .tx-table tr {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 12px;
+    margin-bottom: 8px;
+    background: var(--surface);
+  }
+  .tx-table td {
+    border: none !important;
+    padding: 4px 0 !important;
+    display: flex !important;
+    justify-content: space-between;
+    text-align: right;
+  }
+  .tx-table td::before {
+    content: attr(data-label);
+    color: var(--ink-subtle);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  /* Notification dropdown full-width */
+  .notif-dropdown {
+    position: fixed !important;
+    top: 60px !important;
+    left: 12px !important;
+    right: 12px !important;
+    width: auto !important;
+    max-width: none !important;
+  }
+}
+
+/* ─── TINY PHONES (≤ 480px) ──────────────────────────────────── */
+@media (max-width: 480px) {
+  .page-header, .page-body { padding-left: 14px !important; padding-right: 14px !important; }
+  .card, .ai-hero, .hero { padding: 16px !important; border-radius: 16px !important; }
+  .nav-item-label { display: none !important; }
+  .nav-item { min-width: 44px; }
+
+  /* Form inputs */
+  .form-input, .btn, .auth-input, .auth-btn {
+    font-size: 16px !important;  /* prevents iOS zoom-on-focus */
+  }
+}
+
+/* ─── DESKTOP (1025px+) ─ ensure auth hero shows again ────────── */
+@media (min-width: 1025px) {
+  .auth-hero { display: flex !important; }
+  .auth-shell { grid-template-columns: 1.05fr 1fr; }
+}
+
+/* ─── ACCESSIBILITY: respect prefers-reduced-motion ──────────── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
