@@ -18,7 +18,7 @@
 
 | Name | Role | Module/Task | Evidence |  Evidance location File|
 |---|---|---|---|---|
-| Peerawas| Backend | Back up Data | File.json(API) | backend |  
-| Chitsanupong | Frontend | UI | Screenshot UI | frontend |
-| Techit | UX/UI | Presentation | Screenshot Prototype | ux-ui-product |  
-| Peerapat | Logic-ai | Ai Dev | Notebook (.ipynb) + Model Result | logic-ai |
+| Peerawas| Backend | Back up Data | File.json(API) | branches:feature/flask-react/backend |  
+| Chitsanupong | Frontend | UI | Screenshot UI | branches:feature/flask-react/frontend |
+| Techit | UX/UI | Presentation | Screenshot Prototype | branches:feature/flask-react/ux_ui |  
+| Peerapat | Logic-ai | Ai Dev | Notebook (.ipynb) + Model Result | branches:feature/flask-react/logic_ai |
