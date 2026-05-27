@@ -52,6 +52,7 @@ log = logging.getLogger("moneymind.line")
 
 _secret = os.environ.get("LINE_CHANNEL_SECRET", "")
 _token = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+APP_URL = os.environ.get("APP_URL", "https://moneymind-team-04-sprint3.onrender.com").rstrip("/")
 
 handler = WebhookHandler(_secret)
 
@@ -222,7 +223,7 @@ def _cmd_help() -> str:
         "📂 เดือนนี้ — แยกหมวดหมู่รายจ่าย\n"
         "🔍 วิเคราะห์ — วิเคราะห์การใช้จ่ายและคำแนะนำ\n"
         "📄 ส่งไฟล์ PDF — อัปโหลด statement อัตโนมัติ\n\n"
-        "หรือเข้าใช้งานที่เว็บได้เลยครับ 🌐"
+        f"🌐 เข้าใช้งานเว็บ:\n{APP_URL}"
     )
 
 
@@ -322,7 +323,8 @@ def on_follow(event: FollowEvent):
         "ยินดีต้อนรับสู่ MoneyMind Bot!\n"
         "ผมช่วยวิเคราะห์การใช้จ่ายของคุณได้ครับ\n\n"
         "พิมพ์ 'ช่วย' เพื่อดูคำสั่งทั้งหมด หรือ\n"
-        "ส่งไฟล์ PDF statement มาเลยครับ 📄",
+        "ส่งไฟล์ PDF statement มาเลยครับ 📄\n\n"
+        f"🌐 เว็บแอป: {APP_URL}",
     )
 
 
