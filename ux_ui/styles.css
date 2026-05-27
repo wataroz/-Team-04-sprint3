@@ -2501,96 +2501,140 @@ body::after {
 
 /* ============================================================
    RESPONSIVE — Mobile, Tablet, Desktop overrides
+   Targets actual class names: .app, .sidebar, .brand, .main, .nav-item
    Breakpoints:
-     Desktop  : 1025px+    (notebook, PC)
-     Tablet   :  768-1024  (iPad)
-     Mobile   :  481- 767  (phones)
-     Tiny     :  ≤ 480     (small phones)
+     Desktop  : 1025px+    (notebook, PC)  — original layout
+     Tablet   :  768-1024  (iPad)          — sidebar → bottom nav
+     Mobile   :  481- 767  (phones)        — single column, card tx
+     Tiny     :  ≤ 480     (small phones)  — icon-only nav, no zoom
    ============================================================ */
 
-/* Safe-area for notch (iPhone X+) */
 html, body {
   overflow-x: hidden;
   -webkit-text-size-adjust: 100%;
 }
 
-/* ─── TABLET & MOBILE (≤ 1024px) ─────────────────────────────── */
+/* ─── TABLET + MOBILE (≤ 1024px) ─────────────────────────────── */
 @media (max-width: 1024px) {
-  /* Auth hero side panel — hide on tablet/mobile, show form only */
+
+  /* Auth: hide hero side panel, form takes full width */
   .auth-hero { display: none !important; }
   .auth-shell { grid-template-columns: 1fr !important; }
   .auth-form-wrap { padding: 40px 24px !important; min-height: 100vh; }
+  .auth-quote-text { font-size: clamp(24px, 5vw, 42px) !important; }
+  .auth-quote-mark { font-size: clamp(48px, 8vw, 80px) !important; }
 
-  /* Auth quote scaling */
-  .auth-quote-text { font-size: clamp(28px, 5vw, 42px); }
-  .auth-quote-mark { font-size: clamp(56px, 8vw, 80px); }
+  /* App shell: stack sidebar at bottom */
+  .app {
+    grid-template-columns: 1fr !important;
+    grid-template-rows: 1fr auto;
+  }
 
-  /* Hero balance text */
-  .hero-balance { font-size: clamp(48px, 9vw, 88px) !important; }
-
-  /* App shell: collapse sidebar */
-  .app-shell { grid-template-columns: 1fr !important; }
+  /* Sidebar → horizontal bottom nav */
   .sidebar {
     position: fixed !important;
-    bottom: 0; left: 0; right: 0; top: auto !important;
-    flex-direction: row !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    top: auto !important;
     height: auto !important;
-    padding: 8px env(safe-area-inset-right) calc(8px + env(safe-area-inset-bottom)) env(safe-area-inset-left) !important;
-    border-right: none !important;
-    border-top: 1px solid var(--line) !important;
-    z-index: 100;
-    background: rgba(10,10,11,0.96);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-  }
-  .sidebar-header, .sidebar-footer { display: none !important; }
-  .sidebar-nav {
     flex-direction: row !important;
-    flex: 1;
+    align-items: center;
     justify-content: space-around;
-    gap: 4px !important;
-    padding: 0 !important;
+    gap: 0 !important;
+    padding: 6px 4px calc(6px + env(safe-area-inset-bottom)) 4px !important;
+    border-right: none !important;
+    border-top: 1px solid var(--border) !important;
+    background: rgba(10, 10, 11, 0.96) !important;
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    z-index: 100;
     overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
   }
+
+  /* HIDE these on mobile/tablet (correct selectors!) */
+  .brand,
+  .nav-section-label,
+  .sidebar-footer { display: none !important; }
+
+  /* Nav items: stacked icon + label, equal width */
   .nav-item {
     flex-direction: column !important;
-    gap: 4px !important;
+    gap: 3px !important;
     padding: 8px 6px !important;
-    font-size: 10px !important;
-    min-width: 56px;
-    flex: 0 0 auto;
+    font-size: 10.5px !important;
+    line-height: 1.1 !important;
+    min-width: 64px;
+    max-width: 80px;
+    flex: 1 1 0 !important;
+    text-align: center !important;
+    justify-content: center !important;
+    border-radius: 10px !important;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
-  .nav-item-label { font-size: 10px !important; }
-
-  /* Main content padding to clear bottom nav */
-  .main-content, .page-content {
-    padding-bottom: 80px !important;
+  .nav-item svg { width: 20px !important; height: 20px !important; }
+  .nav-item.active { background: var(--accent-soft) !important; }
+  .nav-badge {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    transform: scale(0.75);
   }
 
-  /* Page padding tighter */
-  .page-header, .page-body { padding-left: 20px !important; padding-right: 20px !important; }
+  /* Main content: full width + bottom padding to clear nav */
+  .main {
+    padding: 24px 20px calc(80px + env(safe-area-inset-bottom)) !important;
+    max-width: 100% !important;
+  }
+
+  /* Topbar */
+  .topbar {
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 0 !important;
+    margin-bottom: 20px !important;
+  }
+  .greeting { font-size: clamp(22px, 5vw, 32px) !important; line-height: 1.2 !important; }
+  .crumb { font-size: 10.5px !important; }
+
+  /* Hero balance text */
+  .hero-balance { font-size: clamp(48px, 12vw, 88px) !important; }
+
+  /* Dashboard empty state — was wrapping per-word due to narrow column */
+  .dashboard-empty {
+    max-width: 100% !important;
+    padding: 48px 20px !important;
+    margin: 20px auto 0 !important;
+  }
+  .dashboard-empty-title { font-size: clamp(22px, 6vw, 28px) !important; }
+  .dashboard-empty-sub { font-size: 14px !important; max-width: 360px; margin: 0 auto !important; }
 
   /* Grids stack */
-  .kpi-grid, .summary-grid, .budget-summary-grid {
-    grid-template-columns: 1fr 1fr !important;
+  .kpi-grid, .summary-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
     gap: 12px !important;
   }
-  .dashboard-grid, .insights-grid {
-    grid-template-columns: 1fr !important;
-    gap: 16px !important;
+  .budget-summary-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 12px !important;
   }
 
-  /* Card padding tighter */
+  /* Card padding */
   .card, .ai-hero, .hero { padding: 20px !important; }
 
-  /* Tables: horizontal scroll */
-  .table-wrap, .tx-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  /* Tables — horizontal scroll wrapper */
+  table { min-width: 100%; }
 
   /* Tweaks panel as bottom sheet */
   .tweaks-panel {
     width: 100% !important;
+    max-width: 100% !important;
     right: 0 !important;
-    border-radius: 24px 24px 0 0 !important;
+    left: 0 !important;
+    border-radius: 20px 20px 0 0 !important;
   }
 
   /* Modals full-width */
@@ -2599,30 +2643,18 @@ html, body {
 
 /* ─── MOBILE ONLY (≤ 767px) ──────────────────────────────────── */
 @media (max-width: 767px) {
-  /* KPI tiles stack to single column on small phones */
+  /* KPI to single column on small phones */
   .kpi-grid { grid-template-columns: 1fr !important; }
 
-  /* Smaller hero numbers */
-  .hero-balance { font-size: clamp(40px, 12vw, 64px) !important; }
-  .ai-hero-title { font-size: clamp(20px, 5vw, 28px) !important; }
+  /* Hero shrinks more */
+  .hero-balance { font-size: clamp(36px, 13vw, 60px) !important; }
+  .ai-hero-title { font-size: clamp(18px, 5vw, 26px) !important; }
 
-  /* Section titles */
-  .page-title { font-size: clamp(22px, 6vw, 32px) !important; }
-  .section-title { font-size: 16px !important; }
-
-  /* Topbar */
-  .topbar { padding: 12px 16px !important; }
-  .topbar-search { display: none !important; }
-
-  /* Upload area */
-  .upload-zone { padding: 28px 16px !important; min-height: 200px !important; }
-  .upload-title { font-size: 18px !important; }
-
-  /* Tx table — convert to card list on phone */
+  /* Convert tx table → card list */
   .tx-table thead { display: none; }
   .tx-table, .tx-table tbody, .tx-table tr, .tx-table td { display: block; width: 100%; }
   .tx-table tr {
-    border: 1px solid var(--line);
+    border: 1px solid var(--border);
     border-radius: 12px;
     padding: 12px;
     margin-bottom: 8px;
@@ -2633,20 +2665,24 @@ html, body {
     padding: 4px 0 !important;
     display: flex !important;
     justify-content: space-between;
+    align-items: center;
     text-align: right;
+    gap: 12px;
   }
   .tx-table td::before {
     content: attr(data-label);
     color: var(--ink-subtle);
-    font-size: 11px;
+    font-size: 10.5px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
+    font-weight: 600;
   }
 
   /* Notification dropdown full-width */
-  .notif-dropdown {
+  .notif-dropdown,
+  .notif-panel {
     position: fixed !important;
-    top: 60px !important;
+    top: 64px !important;
     left: 12px !important;
     right: 12px !important;
     width: auto !important;
@@ -2656,18 +2692,19 @@ html, body {
 
 /* ─── TINY PHONES (≤ 480px) ──────────────────────────────────── */
 @media (max-width: 480px) {
-  .page-header, .page-body { padding-left: 14px !important; padding-right: 14px !important; }
-  .card, .ai-hero, .hero { padding: 16px !important; border-radius: 16px !important; }
-  .nav-item-label { display: none !important; }
-  .nav-item { min-width: 44px; }
+  .main { padding-left: 14px !important; padding-right: 14px !important; }
+  .card, .ai-hero, .hero { padding: 16px !important; border-radius: 14px !important; }
 
-  /* Form inputs */
-  .form-input, .btn, .auth-input, .auth-btn {
-    font-size: 16px !important;  /* prevents iOS zoom-on-focus */
+  /* Icon-only nav on tiny screens */
+  .nav-item { min-width: 50px; padding: 8px 4px !important; }
+
+  /* Form inputs 16px to prevent iOS zoom-on-focus */
+  input, textarea, select, .auth-input, .form-input {
+    font-size: 16px !important;
   }
 }
 
-/* ─── DESKTOP (1025px+) ─ ensure auth hero shows again ────────── */
+/* ─── DESKTOP (1025px+) — restore auth hero ───────────────────── */
 @media (min-width: 1025px) {
   .auth-hero { display: flex !important; }
   .auth-shell { grid-template-columns: 1.05fr 1fr; }
