@@ -15,6 +15,7 @@ Routes:
     POST /api/notifications/mark-read - mark notifications as read
     GET  /api/preferences/<uid>  - get a user's preferences
     PUT  /api/preferences/<uid>  - update a user's preferences
+    POST /api/reset              - wipe a user's txs/imports/notifications
     GET  /api/health             - liveness check
 
 Run with:  python backend/app.py   (from the project root)
@@ -348,6 +349,67 @@ def api_delete_import(import_id: int):
     except Exception as exc:
         db.rollback()
         log.exception("delete import failed for id=%s", import_id)
+        return jsonify({"error": str(exc)}), 500
+    finally:
+        db.close()
+
+
+# ─── Reset (destructive: wipe a user's statement data) ──────────────────────
+
+@app.route("/api/reset", methods=["POST"])
+def api_reset_user_data():
+    """Wipe all statement-related data for a user (Day 4 feature).
+
+    Deletes every Transaction, Import, and Notification owned by ``user_id``.
+    Keeps the User row, Preference (incl. category_budgets) and any LineUser
+    link so the account + LINE pairing survive the reset.
+
+    Requires ``?user_id=<int>`` in the query string — body is ignored to
+    follow the destructive-endpoint pattern used by ``DELETE /api/imports``.
+    """
+    user_id = request.args.get("user_id", type=int)
+    if not user_id:
+        return jsonify({"error": "user_id required"}), 400
+
+    db = SessionLocal()
+    try:
+        # Verify the user exists so callers can't fish with random ids.
+        user = db.query(User).filter_by(id=user_id).first()
+        if user is None:
+            return jsonify({"error": "user not found"}), 404
+
+        # Delete Transactions before Imports — Transaction.source_import_id is
+        # a FK to imports.id, so wiping the parent first would violate the FK
+        # constraint on Postgres.
+        deleted_txs = (
+            db.query(Transaction)
+            .filter_by(user_id=user_id)
+            .delete(synchronize_session=False)
+        )
+        deleted_imports = (
+            db.query(Import)
+            .filter_by(user_id=user_id)
+            .delete(synchronize_session=False)
+        )
+        deleted_notifications = (
+            db.query(Notification)
+            .filter_by(user_id=user_id)
+            .delete(synchronize_session=False)
+        )
+        db.commit()
+
+        log.info(
+            "reset user_id=%s — deleted_txs=%s deleted_imports=%s deleted_notifications=%s",
+            user_id, deleted_txs, deleted_imports, deleted_notifications,
+        )
+        return jsonify({
+            "deleted_txs": int(deleted_txs),
+            "deleted_imports": int(deleted_imports),
+            "deleted_notifications": int(deleted_notifications),
+        })
+    except Exception as exc:
+        db.rollback()
+        log.exception("reset failed for user_id=%s", user_id)
         return jsonify({"error": str(exc)}), 500
     finally:
         db.close()

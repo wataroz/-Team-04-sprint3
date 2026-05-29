@@ -65,6 +65,10 @@ function App() {
   // Last successful import — used to power the "Undo last import" UX.
   // {id, filename, bank, created, skipped} | null
   const [lastImport, setLastImport] = useState(null);
+  // Reset Statement (Day 4) — destructive action with confirm modal
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [resetMessage, setResetMessage] = useState('');
   const notifRef = useRef(null);
 
   // ─── Load persisted data from backend when the user logs in ───
@@ -315,6 +319,42 @@ function App() {
     }
   };
 
+  // ─── Reset Statement (Day 4) ───
+  // Calls AJ's POST /api/reset?user_id=<id> → wipes txs, imports, notifications.
+  // Keeps: user account, preferences (incl. category budgets), LINE link.
+  const handleReset = async () => {
+    if (!user || !user.id || resetting) return;
+    setResetting(true);
+    try {
+      const res = await fetch(`/api/reset?user_id=${user.id}`, { method: 'POST' });
+      if (!res.ok) throw new Error('reset request failed');
+      const j = await res.json().catch(() => ({}));
+      const dTxs = typeof j.deleted_txs === 'number' ? j.deleted_txs : 0;
+      const dImp = typeof j.deleted_imports === 'number' ? j.deleted_imports : 0;
+      const dNot = typeof j.deleted_notifications === 'number' ? j.deleted_notifications : 0;
+      // Clear local state so Dashboard / lists go empty instantly
+      setTxs([]);
+      setNotifs([]);
+      setLastImport(null);
+      setAiResult(null);
+      setPendingImport(null);
+      const tt = (lang === 'th' ? 'th-TH' : 'en-US');
+      const msg = t(I18N.reset_success, lang)
+        .replace('{n}', dTxs.toLocaleString(tt))
+        .replace('{m}', dImp.toLocaleString(tt))
+        .replace('{k}', dNot.toLocaleString(tt));
+      setResetMessage(msg);
+      setTimeout(() => setResetMessage(''), 4500);
+      setResetOpen(false);
+    } catch (err) {
+      console.error('[handleReset] failed', err);
+      setResetMessage(t(I18N.reset_failed, lang));
+      setTimeout(() => setResetMessage(''), 4500);
+    } finally {
+      setResetting(false);
+    }
+  };
+
   const state = { txs, currency, lang, budget, catBudgets };
 
   // ─── Not logged in ─ show auth screens ───
@@ -427,6 +467,16 @@ function App() {
                 <h1 className="greeting">{viewTitles.overview.heading}</h1>
               </div>
               <div className="topbar-actions">
+                <button
+                  className="icon-btn"
+                  onClick={() => setResetOpen(true)}
+                  title={t(I18N.reset_btn, lang)}
+                  disabled={resetting || !txs.length}
+                  style={{ opacity: resetting || !txs.length ? 0.45 : 1 }}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M4 7h16M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2m2 0v12a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V7M10 11v6M14 11v6" />
+                  </svg>
+                </button>
                 <button className="icon-btn" onClick={() => setChatOpen(true)} title={t(I18N.cta_chat, lang)}>{Ic.sparkles}</button>
                 <div className="notif-anchor" ref={notifRef}>
                   <button className="icon-btn" onClick={() => setNotifOpen((o) => !o)} title={lang === 'th' ? 'การแจ้งเตือน' : 'Notifications'}>
@@ -521,6 +571,38 @@ function App() {
           {lang === 'th' ? 'เปิด Chat กับ Mind' : 'Open Mind chat'}
         </TweakButton>
       </TweaksPanel>
+
+      {/* Reset Statement confirm modal */}
+      {resetOpen &&
+        <ResetModal
+          lang={lang}
+          resetting={resetting}
+          onClose={() => { if (!resetting) setResetOpen(false); }}
+          onConfirm={handleReset} />
+      }
+
+      {/* Reset toast (post-action feedback) */}
+      {resetMessage &&
+        <div
+          role="status"
+          style={{
+            position: 'fixed',
+            bottom: 24,
+            right: 24,
+            zIndex: 250,
+            background: '#111114',
+            border: '1px solid var(--border-strong)',
+            borderRadius: 14,
+            padding: '12px 18px',
+            color: 'var(--ink)',
+            fontSize: 13,
+            maxWidth: 380,
+            boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+            animation: 'fadeIn 240ms ease-out',
+          }}>
+          {resetMessage}
+        </div>
+      }
     </div>);
 
 }
@@ -583,6 +665,110 @@ function NotifDropdown({ notifs, lang, onMarkAll, onClickItem, onSeeAll }) {
 
       <div className="notif-foot" onClick={onSeeAll}>
         {lang === 'th' ? 'ดูทั้งหมดใน AI Insights' : 'View all in AI Insights'}
+      </div>
+    </div>);
+
+}
+
+// ─────────────────────────────────────────────────────────────
+// ResetModal — destructive confirm dialog for "Reset Statement"
+// Lists exactly what will be deleted vs. kept, plus an undo warning.
+// ─────────────────────────────────────────────────────────────
+function ResetModal({ lang, onClose, onConfirm, resetting }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape' && !resetting) onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose, resetting]);
+
+  const itemStyle = {
+    display: 'flex',
+    alignItems: 'center',
+    padding: '5px 0',
+    color: 'var(--ink-muted)',
+    fontSize: 13.5,
+    lineHeight: 1.45,
+  };
+  const dot = (tone) => (
+    <span style={{
+      display: 'inline-block',
+      width: 6,
+      height: 6,
+      borderRadius: '50%',
+      background: tone === 'danger' ? 'var(--negative)' : '#88D4A4',
+      marginRight: 12,
+      flexShrink: 0,
+    }} />
+  );
+
+  return (
+    <div className="modal-overlay" onClick={resetting ? undefined : onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 560 }}>
+        <div className="modal-head">
+          <h3>{t(I18N.reset_title, lang)}</h3>
+          {!resetting &&
+            <button className="icon-btn" onClick={onClose}>{Ic.close}</button>
+          }
+        </div>
+        <div className="modal-body">
+          <p style={{ margin: 0, color: 'var(--ink-muted)', fontSize: 14, lineHeight: 1.55 }}>
+            {t(I18N.reset_lead, lang)}
+          </p>
+
+          <div className="field">
+            <label className="field-label" style={{ color: 'var(--negative)' }}>
+              {t(I18N.reset_will_delete, lang)}
+            </label>
+            <div>
+              <div style={itemStyle}>{dot('danger')}{t(I18N.reset_d_txs, lang)}</div>
+              <div style={itemStyle}>{dot('danger')}{t(I18N.reset_d_imports, lang)}</div>
+              <div style={itemStyle}>{dot('danger')}{t(I18N.reset_d_notifs, lang)}</div>
+            </div>
+          </div>
+
+          <div className="field">
+            <label className="field-label">{t(I18N.reset_will_keep, lang)}</label>
+            <div>
+              <div style={itemStyle}>{dot('good')}{t(I18N.reset_k_budgets, lang)}</div>
+              <div style={itemStyle}>{dot('good')}{t(I18N.reset_k_account, lang)}</div>
+              <div style={itemStyle}>{dot('good')}{t(I18N.reset_k_line, lang)}</div>
+            </div>
+          </div>
+
+          <div style={{
+            padding: '10px 14px',
+            borderRadius: 10,
+            background: 'var(--negative-soft)',
+            border: '1px solid color-mix(in oklab, var(--negative) 30%, transparent)',
+            color: 'var(--negative)',
+            fontSize: 12.5,
+            letterSpacing: 0.3,
+          }}>
+            {t(I18N.reset_warning, lang)}
+          </div>
+        </div>
+        <div className="modal-foot">
+          <button
+            className="btn"
+            onClick={onClose}
+            disabled={resetting}
+            style={{ opacity: resetting ? 0.5 : 1 }}>
+            {t(I18N.reset_cancel, lang)}
+          </button>
+          <button
+            className="btn"
+            onClick={onConfirm}
+            disabled={resetting}
+            style={{
+              background: 'var(--negative)',
+              color: '#1a1010',
+              border: '1px solid var(--negative)',
+              fontWeight: 600,
+              opacity: resetting ? 0.7 : 1,
+            }}>
+            {resetting ? t(I18N.reset_doing, lang) : t(I18N.reset_confirm, lang)}
+          </button>
+        </div>
       </div>
     </div>);
 
