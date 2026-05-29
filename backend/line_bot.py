@@ -32,6 +32,7 @@ from linebot.v3.messaging import (
     Configuration,
     MessagingApi,
     MessagingApiBlob,
+    PushMessageRequest,
     ReplyMessageRequest,
     TextMessage,
 )
@@ -74,15 +75,49 @@ def _blob_api() -> MessagingApiBlob:
 
 # ─── Helpers ───────────────────────────────────────────────────────────────
 
-def _reply(reply_token: str, text) -> None:
-    """Reply with one text message, or a list of texts (up to 5)."""
+def _reply(reply_token: str, text, user_id: str | None = None) -> None:
+    """Reply with one text message, or a list of texts (up to 5).
+
+    On Render Free tier the container may cold-start (30-60s) before this
+    code runs, by which point the LINE reply token has already expired
+    (reply tokens are single-use and valid only a few seconds). When
+    reply_message fails we fall back to push_message, which needs only the
+    user_id and has no token-expiry problem. Pass user_id from
+    event.source.user_id to enable the fallback.
+    """
     if isinstance(text, str):
         msgs = [TextMessage(text=text)]
     else:
         msgs = [TextMessage(text=t) for t in text[:5]]
-    _api().reply_message(
-        ReplyMessageRequest(reply_token=reply_token, messages=msgs)
-    )
+    try:
+        _api().reply_message(
+            ReplyMessageRequest(reply_token=reply_token, messages=msgs)
+        )
+    except Exception as exc:
+        log.exception("reply_message failed (token may be expired): %s", exc)
+        if not user_id:
+            log.error("No user_id available - cannot fall back to push_message")
+            return
+        try:
+            _api().push_message(
+                PushMessageRequest(to=user_id, messages=msgs)
+            )
+            log.info("Fallback push_message succeeded for user %s", user_id)
+        except Exception as push_exc:
+            log.exception("Fallback push_message also failed: %s", push_exc)
+
+
+def _try_get_display_name(line_user_id: str) -> str:
+    """Best-effort LINE profile lookup. Returns "" on any failure.
+
+    This is a blocking network call, so call it only when the display name
+    is actually needed (e.g. onboarding) - never on the command hot path.
+    """
+    try:
+        profile = _api().get_profile(line_user_id)
+        return profile.display_name or ""
+    except Exception:
+        return ""
 
 
 # ─── Shared intro / onboarding messages ────────────────────────────────────
@@ -320,7 +355,8 @@ def _cmd_tutorial() -> str:
 
 # ─── PDF file handler ──────────────────────────────────────────────────────
 
-def _handle_pdf(reply_token: str, message_id: str, user: User) -> None:
+def _handle_pdf(reply_token: str, message_id: str, user: User,
+                line_user_id: str | None = None) -> None:
     try:
         blob_content = _blob_api().get_message_content(message_id=message_id)
         # blob_content is bytes-like
@@ -332,7 +368,7 @@ def _handle_pdf(reply_token: str, message_id: str, user: User) -> None:
         bank, txs = parse_statement(pdf_bytes)
 
         if not txs:
-            _reply(reply_token, "ไม่พบรายการในไฟล์ PDF นี้ครับ\nลองส่งไฟล์ statement จากธนาคารอีกครั้งนะครับ")
+            _reply(reply_token, "ไม่พบรายการในไฟล์ PDF นี้ครับ\nลองส่งไฟล์ statement จากธนาคารอีกครั้งนะครับ", user_id=line_user_id)
             return
 
         db = SessionLocal()
@@ -391,11 +427,12 @@ def _handle_pdf(reply_token: str, message_id: str, user: User) -> None:
             f"  📊 \"สรุป\" — ดูยอดรับ-จ่าย\n"
             f"  📂 \"เดือนนี้\" — แยกหมวดหมู่\n"
             f"  🔍 \"วิเคราะห์\" — คำแนะนำประหยัด",
+            user_id=line_user_id,
         )
 
     except Exception as exc:
         log.exception("PDF parse failed for LINE user %s", user.id)
-        _reply(reply_token, f"❌ ไม่สามารถอ่านไฟล์ได้ครับ: {exc}\nลองส่งไฟล์ PDF จากธนาคารที่รองรับใหม่นะครับ")
+        _reply(reply_token, f"❌ ไม่สามารถอ่านไฟล์ได้ครับ: {exc}\nลองส่งไฟล์ PDF จากธนาคารที่รองรับใหม่นะครับ", user_id=line_user_id)
 
 
 # ─── LINE SDK event handlers ───────────────────────────────────────────────
@@ -404,16 +441,13 @@ def _handle_pdf(reply_token: str, message_id: str, user: User) -> None:
 def on_follow(event: FollowEvent):
     """User adds the bot as a friend."""
     line_user_id = event.source.user_id
-    display_name = ""
-    try:
-        profile = _api().get_profile(line_user_id)
-        display_name = profile.display_name or ""
-    except Exception:
-        pass
+    # On follow we DO want the real display name (only chance to capture it
+    # for new accounts), so the profile lookup here is justified.
+    display_name = _try_get_display_name(line_user_id)
 
     _get_or_create_user(line_user_id, display_name)
     # Send full intro: welcome + tutorial + commands (as 2 bubbles)
-    _reply(event.reply_token, _full_intro(display_name))
+    _reply(event.reply_token, _full_intro(display_name), user_id=line_user_id)
 
 
 @handler.add(MessageEvent, message=TextMessageContent)
@@ -421,15 +455,13 @@ def on_text(event: MessageEvent):
     line_user_id = event.source.user_id
     text = event.message.text.strip().lower()
 
-    # Try to get profile for display name
-    display_name = ""
-    try:
-        profile = _api().get_profile(line_user_id)
-        display_name = profile.display_name or ""
-    except Exception:
-        pass
-
-    user = _get_or_create_user(line_user_id, display_name)
+    # NOTE: do NOT call get_profile() here. It's a blocking network call that
+    # adds latency on the command hot path. On Render Free cold-starts every
+    # millisecond counts before the reply token expires. Commands below don't
+    # need the display name; _get_or_create_user only uses it when creating a
+    # brand-new account (existing users are returned without touching the
+    # name), and the _full_intro fallback fetches the profile lazily.
+    user = _get_or_create_user(line_user_id, "")
 
     COMMANDS = {
         ("สรุป", "summary", "สรุปยอด"): lambda: _cmd_summary(user.id),
@@ -442,12 +474,15 @@ def on_text(event: MessageEvent):
 
     for keywords, fn in COMMANDS.items():
         if text in keywords:
-            _reply(event.reply_token, fn())
+            _reply(event.reply_token, fn(), user_id=line_user_id)
             return
 
-    # Default: send the full intro (welcome + tutorial + commands)
+    # Unknown message → send the full intro (welcome + tutorial + commands)
     # so users always see how to use the bot regardless of what they type.
-    _reply(event.reply_token, _full_intro(display_name))
+    # Only here do we need the display name, so fetch it lazily off the
+    # command hot path.
+    display_name = _try_get_display_name(line_user_id)
+    _reply(event.reply_token, _full_intro(display_name), user_id=line_user_id)
 
 
 @handler.add(MessageEvent, message=FileMessageContent)
@@ -456,25 +491,20 @@ def on_file(event: MessageEvent):
     file_msg: FileMessageContent = event.message
     line_user_id = event.source.user_id
 
-    display_name = ""
-    try:
-        profile = _api().get_profile(line_user_id)
-        display_name = profile.display_name or ""
-    except Exception:
-        pass
-
-    user = _get_or_create_user(line_user_id, display_name)
+    # PDF handling does not need the display name → skip get_profile() here.
+    user = _get_or_create_user(line_user_id, "")
 
     filename = getattr(file_msg, "file_name", "") or ""
     if not filename.lower().endswith(".pdf"):
         _reply(
             event.reply_token,
             "รองรับเฉพาะไฟล์ PDF ครับ\nส่งไฟล์ statement PDF จากธนาคารได้เลย 📄",
+            user_id=line_user_id,
         )
         return
 
-    _reply(event.reply_token, "⏳ กำลังอ่านข้อมูลครับ...")
-    _handle_pdf(event.reply_token, file_msg.id, user)
+    _reply(event.reply_token, "⏳ กำลังอ่านข้อมูลครับ...", user_id=line_user_id)
+    _handle_pdf(event.reply_token, file_msg.id, user, line_user_id=line_user_id)
 
 
 # ─── Fallback handlers — sticker, image, video, audio, location ────────────
@@ -483,14 +513,9 @@ def on_file(event: MessageEvent):
 
 def _generic_intro_reply(event: MessageEvent) -> None:
     line_user_id = event.source.user_id
-    display_name = ""
-    try:
-        profile = _api().get_profile(line_user_id)
-        display_name = profile.display_name or ""
-    except Exception:
-        pass
+    display_name = _try_get_display_name(line_user_id)
     _get_or_create_user(line_user_id, display_name)
-    _reply(event.reply_token, _full_intro(display_name))
+    _reply(event.reply_token, _full_intro(display_name), user_id=line_user_id)
 
 
 @handler.add(MessageEvent, message=StickerMessageContent)
@@ -501,19 +526,14 @@ def on_sticker(event: MessageEvent):
 @handler.add(MessageEvent, message=ImageMessageContent)
 def on_image(event: MessageEvent):
     line_user_id = event.source.user_id
-    display_name = ""
-    try:
-        profile = _api().get_profile(line_user_id)
-        display_name = profile.display_name or ""
-    except Exception:
-        pass
+    display_name = _try_get_display_name(line_user_id)
     _get_or_create_user(line_user_id, display_name)
     # Hint: images of statements need to be PDF, not photo
     _reply(event.reply_token, [
         "ขออภัยครับ รูปภาพยังไม่รองรับ 📷\n"
         "กรุณาส่งเป็นไฟล์ PDF จากแอปธนาคารแทนนะครับ 📄",
         *_full_intro(display_name),
-    ])
+    ], user_id=line_user_id)
 
 
 @handler.add(MessageEvent, message=VideoMessageContent)

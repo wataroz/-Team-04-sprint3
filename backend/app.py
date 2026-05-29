@@ -76,6 +76,12 @@ app = Flask(
 )
 app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024  # 20 MB upload cap
 
+# Configure logging at import time so log records are visible under gunicorn
+# (production) as well as the Flask dev server. Previously this lived inside
+# `if __name__ == "__main__"`, so gunicorn-launched workers never set it up
+# and log.info/log.exception output was swallowed.
+logging.basicConfig(level=logging.INFO)
+
 log = logging.getLogger("moneymind")
 
 # Create tables (and the data/ folder) on import.
@@ -391,8 +397,6 @@ def _open_browser():
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-
     # On Render (or any cloud host), PORT env var is set and we bind 0.0.0.0
     # so traffic can reach the container. Locally we keep 127.0.0.1 + browser.
     port = int(os.environ.get("PORT", "5000"))
