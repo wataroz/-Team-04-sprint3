@@ -593,6 +593,12 @@ def _handle_pdf(reply_token: str, message_id: str, user: User,
             _reply(reply_token, "ไม่พบรายการในไฟล์ PDF นี้ครับ\nลองส่งไฟล์ statement จากธนาคารอีกครั้งนะครับ", user_id=line_user_id)
             return
 
+        # Lazy import to avoid the circular: app.py imports line_bot for the
+        # webhook route, so importing app at module load would break startup.
+        from backend.app import _dedup_build_rows
+
+        created = 0
+        skipped = 0
         db = SessionLocal()
         try:
             from backend.models import Import as ImportModel
@@ -606,30 +612,36 @@ def _handle_pdf(reply_token: str, message_id: str, user: User,
             db.commit()
             db.refresh(imp)
 
-            rows = []
-            for tx in txs:
-                rows.append(Transaction(
-                    user_id=user.id,
-                    source_import_id=imp.id,
-                    date=(tx.get("date") or "")[:10],
-                    merchant=tx.get("merchant") or "",
-                    amount=float(tx.get("amount") or 0),
-                    type=tx.get("type") or "",
-                    category=tx.get("category") or "other",
-                    note=tx.get("note") or "",
-                ))
-            db.bulk_save_objects(rows)
+            rows, skipped = _dedup_build_rows(db, user.id, txs, imp.id)
+            created = len(rows)
+            if rows:
+                db.bulk_save_objects(rows)
 
-            # Create notification
+            # Reflect the actually-inserted count on the Import audit row so
+            # the imports list doesn't lie about how much was added.
+            imp.count = created
+
+            # Create notification — describe what actually landed in DB.
+            if created > 0:
+                desc_th = f"เพิ่ม {created} รายการจาก {bank.upper()} ผ่าน LINE"
+                desc_en = f"Added {created} transactions from {bank.upper()} via LINE"
+                if skipped:
+                    desc_th += f" (ข้ามซ้ำ {skipped})"
+                    desc_en += f" (skipped {skipped} duplicates)"
+                title = {"th": "นำเข้าสำเร็จ (LINE)", "en": "Import success (LINE)"}
+                kind = "good"
+            else:
+                desc_th = f"ไม่มีรายการใหม่ — ข้ามซ้ำทั้งหมด {skipped} รายการ"
+                desc_en = f"No new transactions — {skipped} duplicates skipped"
+                title = {"th": "ไม่มีรายการใหม่ (LINE)", "en": "No new transactions (LINE)"}
+                kind = "info"
+
             n = Notification(
                 user_id=user.id,
-                kind="good",
-                icon="check",
-                title={"th": "นำเข้าสำเร็จ (LINE)", "en": "Import success (LINE)"},
-                desc={
-                    "th": f"เพิ่ม {len(txs)} รายการจาก {bank.upper()} ผ่าน LINE",
-                    "en": f"Added {len(txs)} transactions from {bank.upper()} via LINE",
-                },
+                kind=kind,
+                icon="check" if created > 0 else "bell",
+                title=title,
+                desc={"th": desc_th, "en": desc_en},
                 unread=True,
             )
             db.add(n)
@@ -637,26 +649,41 @@ def _handle_pdf(reply_token: str, message_id: str, user: User,
         finally:
             db.close()
 
-        # After importing, warn via LINE if any category is now over budget.
-        try:
-            _push_budget_alerts(user.id)
-        except Exception:
-            log.exception("budget alert after LINE PDF import failed")
+        # Only push budget alerts when we actually added new spending — if
+        # everything was a duplicate, monthly totals didn't change.
+        if created > 0:
+            try:
+                _push_budget_alerts(user.id)
+            except Exception:
+                log.exception("budget alert after LINE PDF import failed")
 
         bank_name = {"kbank": "กสิกรไทย", "scb": "ไทยพาณิชย์",
                      "ktb": "กรุงไทย", "gsb": "ออมสิน"}.get(bank, bank.upper())
-        _reply(
-            reply_token,
-            f"✅ นำเข้าสำเร็จครับ!\n"
-            f"ธนาคาร: {bank_name}\n"
-            f"จำนวน: {len(txs)} รายการ\n\n"
-            f"━━━━━━━━━━━━━━━\n"
-            f"ลองพิมพ์ดูครับ:\n"
-            f"  📊 \"สรุป\" — ดูยอดรับ-จ่าย\n"
-            f"  📂 \"เดือนนี้\" — แยกหมวดหมู่\n"
-            f"  🔍 \"วิเคราะห์\" — คำแนะนำประหยัด",
-            user_id=line_user_id,
-        )
+
+        if created > 0:
+            dup_line = f"\nข้ามรายการซ้ำ: {skipped} รายการ" if skipped else ""
+            _reply(
+                reply_token,
+                f"✅ นำเข้าสำเร็จครับ!\n"
+                f"ธนาคาร: {bank_name}\n"
+                f"จำนวน: {created} รายการ"
+                f"{dup_line}\n\n"
+                f"━━━━━━━━━━━━━━━\n"
+                f"ลองพิมพ์ดูครับ:\n"
+                f"  📊 \"สรุป\" — ดูยอดรับ-จ่าย\n"
+                f"  📂 \"เดือนนี้\" — แยกหมวดหมู่\n"
+                f"  🔍 \"วิเคราะห์\" — คำแนะนำประหยัด",
+                user_id=line_user_id,
+            )
+        else:
+            _reply(
+                reply_token,
+                f"ℹ️ ไฟล์นี้เคยนำเข้าแล้วครับ\n"
+                f"ธนาคาร: {bank_name}\n"
+                f"ข้ามรายการซ้ำทั้งหมด: {skipped} รายการ\n\n"
+                f"ลองพิมพ์ \"สรุป\" เพื่อดูยอดเดิมได้เลย",
+                user_id=line_user_id,
+            )
 
     except Exception as exc:
         log.exception("PDF parse failed for LINE user %s", user.id)

@@ -1022,7 +1022,7 @@ function autoCategory(merchant) {
   return 'other';
 }
 
-function Upload({ state, addTxs, setPendingImport }) {
+function Upload({ state, addTxs, setPendingImport, lastImport, deleteLastImport }) {
   const { lang, currency } = state;
   const [stage, setStage] = useState('idle'); // idle | parsing | review | done
   const [activeStep, setActiveStep] = useState(0);
@@ -1030,6 +1030,11 @@ function Upload({ state, addTxs, setPendingImport }) {
   const [preview, setPreview] = useState([]);
   const [fileName, setFileName] = useState('');
   const [fileError, setFileError] = useState('');
+  // Result of the most recent POST /api/transactions:
+  // {created, skipped, importId, error?} — drives the "done" message + Undo button
+  const [importResult, setImportResult] = useState(null);
+  const [undoing, setUndoing] = useState(false);
+  const [undoMessage, setUndoMessage] = useState(''); // post-undo toast text
   const fileRef = useRef(null);
 
   const steps = [I18N.parse_step_1, I18N.parse_step_2, I18N.parse_step_3, I18N.parse_step_4];
@@ -1215,15 +1220,15 @@ function Upload({ state, addTxs, setPendingImport }) {
     fileRef.current?.click();
   };
 
-  const handleImport = () => {
-    addTxs(preview);
+  const handleImport = async () => {
     setStage('done');
-    setTimeout(() => {
-      setStage('idle');
-      setActiveStep(0);
-      setPreview([]);
-      setFileName('');
-    }, 2200);
+    setUndoMessage('');
+    // Wait for backend so we can show the real created/skipped numbers.
+    const result = await addTxs(preview);
+    setImportResult(result || { created: preview.length, skipped: 0 });
+    // Stage stays at 'done' until the user clicks "ทำต่อ / Done" or Undo.
+    // (Previously auto-reset after 2.2s — but now we need the Undo button
+    // to stay visible long enough for the user to actually use it.)
   };
 
   const handleReset = () => {
@@ -1232,6 +1237,27 @@ function Upload({ state, addTxs, setPendingImport }) {
     setPreview([]);
     setFileName('');
     setFileError('');
+    setImportResult(null);
+    setUndoMessage('');
+  };
+
+  const handleUndo = async () => {
+    if (!lastImport || undoing) return;
+    const msg = t(I18N.undo_confirm, lang);
+    // Simple confirm dialog — keeps the implementation light. Could be
+    // replaced with a styled modal later if design wants it.
+    if (!window.confirm(msg)) return;
+    setUndoing(true);
+    const res = await deleteLastImport();
+    setUndoing(false);
+    if (res && res.ok) {
+      const success = t(I18N.undo_success, lang).replace('{n}', (res.removed || 0).toLocaleString(lang === 'th' ? 'th-TH' : 'en-US'));
+      setUndoMessage(success);
+      // Clear the import-result message — the entries are gone now.
+      setImportResult(null);
+    } else {
+      setUndoMessage(t(I18N.undo_failed, lang));
+    }
   };
 
   // Load the bundled sample CSV
@@ -1357,20 +1383,74 @@ function Upload({ state, addTxs, setPendingImport }) {
         </>
       }
 
-      {stage === 'done' &&
-      <div className="card page-enter" style={{ marginTop: 24, padding: 32, textAlign: 'center' }}>
-          <div style={{
-          width: 56, height: 56, borderRadius: 16, margin: '0 auto 18px',
-          background: 'var(--positive-soft)', display: 'grid', placeItems: 'center', color: 'var(--positive)'
-        }}>{Ic.check}</div>
-          <h2 style={{ fontFamily: 'var(--serif)', fontSize: 28, fontWeight: 400, margin: '0 0 6px' }}>
-            {lang === 'th' ? <>นำเข้าสำเร็จ <em style={{ color: 'var(--positive)' }}>{preview.length}</em> รายการ</> : <>Imported <em style={{ color: 'var(--positive)' }}>{preview.length}</em> entries</>}
-          </h2>
-          <p style={{ color: 'var(--ink-subtle)', fontSize: 13.5, margin: 0 }}>
-            {lang === 'th' ? 'ดูใน Dashboard และ Transactions ได้เลย' : 'Visible in Dashboard and Transactions now.'}
-          </p>
-        </div>
-      }
+      {stage === 'done' && (() => {
+        // While addTxs is still in-flight, show a neutral "saving" state.
+        const r = importResult;
+        const loading = !r;
+        const created = r ? r.created : 0;
+        const skipped = r ? r.skipped : 0;
+        const allDup = !loading && created === 0 && skipped > 0;
+        const partial = !loading && created > 0 && skipped > 0;
+        const plain = !loading && created > 0 && skipped === 0;
+
+        // Build the headline using i18n templates ({n}, {m} placeholders)
+        const fmtN = (n) => (n || 0).toLocaleString(lang === 'th' ? 'th-TH' : 'en-US');
+        let headlineKey;
+        if (plain) headlineKey = I18N.import_result_created;
+        else if (partial) headlineKey = I18N.import_result_partial;
+        else if (allDup) headlineKey = I18N.import_result_all_dup;
+
+        const headline = headlineKey ?
+          t(headlineKey, lang).replace('{n}', fmtN(created)).replace('{m}', fmtN(skipped)) :
+          (lang === 'th' ? 'กำลังบันทึก...' : 'Saving…');
+
+        const iconColor = allDup ? 'var(--ink-subtle)' : 'var(--positive)';
+        const iconBg = allDup ? 'var(--accent-soft)' : 'var(--positive-soft)';
+
+        return (
+          <div className="card page-enter" style={{ marginTop: 24, padding: 32, textAlign: 'center' }}>
+            <div style={{
+              width: 56, height: 56, borderRadius: 16, margin: '0 auto 18px',
+              background: iconBg, display: 'grid', placeItems: 'center', color: iconColor
+            }}>{allDup ? Ic.file : Ic.check}</div>
+            <h2 style={{ fontFamily: 'var(--serif)', fontSize: 26, fontWeight: 400, margin: '0 0 6px' }}>
+              {headline}
+            </h2>
+            <p style={{ color: 'var(--ink-subtle)', fontSize: 13.5, margin: 0 }}>
+              {allDup ?
+                (lang === 'th' ? 'ไม่มีการเปลี่ยนแปลงในข้อมูลของคุณ' : 'No changes to your data.') :
+                (lang === 'th' ? 'ดูใน Dashboard และ Transactions ได้เลย' : 'Visible in Dashboard and Transactions now.')}
+            </p>
+
+            {undoMessage &&
+              <div style={{
+                marginTop: 18, padding: '10px 16px', display: 'inline-block',
+                background: 'var(--accent-soft)', color: 'var(--ink)',
+                borderRadius: 999, fontSize: 13
+              }}>{undoMessage}</div>
+            }
+
+            <div style={{ display: 'flex', gap: 12, justifyContent: 'center', marginTop: 22, flexWrap: 'wrap' }}>
+              {/* Undo — visible only when there IS something to undo */}
+              {lastImport && lastImport.id && !undoMessage &&
+                <button
+                  className="btn"
+                  onClick={handleUndo}
+                  disabled={undoing}
+                  style={{ opacity: undoing ? 0.5 : 1 }}>
+                  {Ic.refresh || Ic.close}
+                  {undoing ?
+                    (lang === 'th' ? 'กำลังยกเลิก...' : 'Undoing…') :
+                    t(I18N.undo_import, lang)}
+                </button>
+              }
+              <button className="btn btn-accent" onClick={handleReset}>
+                {Ic.check}{lang === 'th' ? 'เสร็จสิ้น' : 'Done'}
+              </button>
+            </div>
+          </div>
+        );
+      })()}
     </div>);
 
 }

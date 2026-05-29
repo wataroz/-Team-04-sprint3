@@ -182,6 +182,64 @@ def api_list_transactions():
         db.close()
 
 
+def _dedup_build_rows(db, user_id: int, txs: list[dict], import_id):
+    """Build Transaction ORM rows from a payload, skipping duplicates.
+
+    A transaction is considered a duplicate when its fingerprint
+    ``(date[:10], round(amount, 2), merchant.strip().lower())`` already
+    exists in the DB for this user, OR when the same fingerprint appeared
+    earlier in the current batch.
+
+    Existing fingerprints are loaded with a single query that uses the
+    ``user_id`` index, so this is O(N + M) for N existing + M payload rows
+    and avoids the N+1 / per-row roundtrip trap.
+
+    Returns: ``(rows_to_insert, skipped_count)``.
+
+    Shared by ``POST /api/transactions`` (web) and ``_handle_pdf`` (LINE).
+    """
+    existing_rows = (
+        db.query(Transaction.date, Transaction.amount, Transaction.merchant)
+        .filter(Transaction.user_id == user_id)
+        .all()
+    )
+    existing: set[tuple[str, float, str]] = {
+        ((d or "")[:10], round(float(a or 0), 2), (m or "").strip().lower())
+        for d, a, m in existing_rows
+    }
+
+    rows: list[Transaction] = []
+    seen_in_batch: set[tuple[str, float, str]] = set()
+    skipped = 0
+
+    for tx in txs:
+        date = (tx.get("date") or "")[:10]
+        merchant = tx.get("merchant") or ""
+        try:
+            amount = float(tx.get("amount") or 0)
+        except (TypeError, ValueError):
+            amount = 0.0
+        fp = (date, round(amount, 2), merchant.strip().lower())
+
+        if fp in existing or fp in seen_in_batch:
+            skipped += 1
+            continue
+        seen_in_batch.add(fp)
+
+        rows.append(Transaction(
+            user_id=user_id,
+            source_import_id=import_id,
+            date=date,
+            merchant=merchant,
+            amount=amount,
+            type=tx.get("type") or "",
+            category=tx.get("category") or "other",
+            note=tx.get("note") or "",
+        ))
+
+    return rows, skipped
+
+
 @app.route("/api/transactions", methods=["POST"])
 def api_create_transactions():
     body = request.get_json(silent=True) or {}
@@ -196,19 +254,9 @@ def api_create_transactions():
 
     db = SessionLocal()
     try:
-        rows: list[Transaction] = []
-        for tx in txs:
-            rows.append(Transaction(
-                user_id=user_id,
-                source_import_id=import_id,
-                date=(tx.get("date") or "")[:10],
-                merchant=tx.get("merchant") or "",
-                amount=float(tx.get("amount") or 0),
-                type=tx.get("type") or "",
-                category=tx.get("category") or "other",
-                note=tx.get("note") or "",
-            ))
-        db.bulk_save_objects(rows)
+        rows, skipped = _dedup_build_rows(db, int(user_id), txs, import_id)
+        if rows:
+            db.bulk_save_objects(rows)
         db.commit()
     except Exception as exc:
         db.rollback()
@@ -217,17 +265,18 @@ def api_create_transactions():
     finally:
         db.close()
 
-    # After committing new transactions, push a LINE budget alert if this user
-    # has a linked LINE account and any category is now over budget. Done after
-    # the session closes (and outside the try so it never affects the insert
-    # result). Lazy import keeps app startup independent of the LINE bot.
-    try:
-        from backend.line_bot import _push_budget_alerts
-        _push_budget_alerts(int(user_id))
-    except Exception:
-        log.exception("budget alert after web bulk insert failed")
+    created = len(rows)
 
-    return jsonify({"created": len(rows)})
+    # Skip the budget-alert push when nothing new was inserted — totals
+    # cannot have moved, so there is nothing fresh to warn about.
+    if created > 0:
+        try:
+            from backend.line_bot import _push_budget_alerts
+            _push_budget_alerts(int(user_id))
+        except Exception:
+            log.exception("budget alert after web bulk insert failed")
+
+    return jsonify({"created": created, "skipped": skipped})
 
 
 # ─── Imports (audit log of statement uploads) ───────────────────────────────
@@ -264,6 +313,42 @@ def api_list_imports():
     try:
         rows = db.query(Import).filter_by(user_id=user_id).order_by(Import.imported_at.desc()).all()
         return jsonify([r.to_dict() for r in rows])
+    finally:
+        db.close()
+
+
+@app.route("/api/imports/<int:import_id>", methods=["DELETE"])
+def api_delete_import(import_id: int):
+    """Undo an import: delete the Import row plus every Transaction whose
+    source_import_id matches.
+
+    Requires ``?user_id=<int>`` to verify ownership — without this anyone
+    could delete anyone else's import by guessing the id.
+    """
+    user_id = request.args.get("user_id", type=int)
+    if not user_id:
+        return jsonify({"error": "user_id required"}), 400
+
+    db = SessionLocal()
+    try:
+        imp = db.query(Import).filter_by(id=import_id).first()
+        if imp is None:
+            return jsonify({"error": "import not found"}), 404
+        if imp.user_id != user_id:
+            return jsonify({"error": "forbidden"}), 403
+
+        removed_txs = (
+            db.query(Transaction)
+            .filter_by(source_import_id=import_id, user_id=user_id)
+            .delete(synchronize_session=False)
+        )
+        db.delete(imp)
+        db.commit()
+        return jsonify({"deleted": 1, "removed_txs": int(removed_txs)})
+    except Exception as exc:
+        db.rollback()
+        log.exception("delete import failed for id=%s", import_id)
+        return jsonify({"error": str(exc)}), 500
     finally:
         db.close()
 

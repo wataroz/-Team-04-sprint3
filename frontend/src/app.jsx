@@ -62,6 +62,9 @@ function App() {
   const [notifs, setNotifs] = useState(() => []);
   const [catBudgets, setCatBudgets] = useState(() => loadCategoryBudgets());
   const [pendingImport, setPendingImport] = useState(null); // {filename, bank, count} from /api/parse-pdf
+  // Last successful import — used to power the "Undo last import" UX.
+  // {id, filename, bank, created, skipped} | null
+  const [lastImport, setLastImport] = useState(null);
   const notifRef = useRef(null);
 
   // ─── Load persisted data from backend when the user logs in ───
@@ -204,20 +207,24 @@ function App() {
     if (!user || !user.id) {
       // Fallback: not logged in (shouldn't happen) — just keep in-memory.
       setTxs((prev) => [...newTxs, ...prev]);
-      return;
+      return { created: newTxs.length, skipped: 0, importId: null };
     }
     const count = newTxs.length;
+    let importId = null;
+    let importMeta = null;
+    let created = count;
+    let skipped = 0;
     try {
       // 1) Record an Import row if we know which file this came from
-      let importId = null;
       if (pendingImport) {
+        importMeta = { filename: pendingImport.filename || '', bank: pendingImport.bank || 'unknown' };
         const r = await fetch('/api/imports', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             user_id: user.id,
-            filename: pendingImport.filename || '',
-            bank: pendingImport.bank || 'unknown',
+            filename: importMeta.filename,
+            bank: importMeta.bank,
             count,
           }),
         });
@@ -228,12 +235,18 @@ function App() {
         setPendingImport(null);
       }
 
-      // 2) Persist transactions
-      await fetch('/api/transactions', {
+      // 2) Persist transactions — backend now returns {created, skipped}
+      //    (dedup ทำที่ฝั่ง backend หลัง AJ แก้ Sprint 3 Day 4)
+      const txRes = await fetch('/api/transactions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: user.id, import_id: importId, transactions: newTxs }),
       });
+      if (txRes.ok) {
+        const j = await txRes.json().catch(() => ({}));
+        if (typeof j.created === 'number') created = j.created;
+        if (typeof j.skipped === 'number') skipped = j.skipped;
+      }
 
       // 3) Reload txs from backend so we have real IDs / canonical order
       const r2 = await fetch('/api/transactions?user_id=' + user.id);
@@ -242,9 +255,11 @@ function App() {
       // 4) Stale AI summary
       setAiResult(null);
 
-      // 5) Surface a notification
-      if (count > 0) {
-        const title = { th: `นำเข้า ${count.toLocaleString()} รายการสำเร็จ`, en: `Imported ${count.toLocaleString()} transactions` };
+      // 5) Surface a notification (only if something actually landed)
+      if (created > 0) {
+        const title = skipped > 0 ?
+          { th: `นำเข้า ${created.toLocaleString()} รายการ · ข้ามซ้ำ ${skipped.toLocaleString()}`, en: `Imported ${created.toLocaleString()} · skipped ${skipped.toLocaleString()} duplicates` } :
+          { th: `นำเข้า ${created.toLocaleString()} รายการสำเร็จ`, en: `Imported ${created.toLocaleString()} transactions` };
         const desc = { th: 'Dashboard และ AI Insights อัปเดตตามข้อมูลใหม่แล้ว', en: 'Dashboard and AI Insights now reflect the new data.' };
         await fetch('/api/notifications', {
           method: 'POST',
@@ -254,10 +269,49 @@ function App() {
         const r3 = await fetch('/api/notifications?user_id=' + user.id);
         if (r3.ok) setNotifs(await r3.json());
       }
+
+      // 6) Record the last import so the user can Undo it
+      if (importId) {
+        setLastImport({
+          id: importId,
+          filename: importMeta ? importMeta.filename : '',
+          bank: importMeta ? importMeta.bank : '',
+          created,
+          skipped,
+        });
+      }
+
+      return { created, skipped, importId };
     } catch (err) {
       console.error('[addTxs] persist failed', err);
       // Still update local state so the user sees something
       setTxs((prev) => [...newTxs, ...prev]);
+      return { created: count, skipped: 0, importId, error: true };
+    }
+  };
+
+  // Delete the most recent Import (and its transactions) — powers "Undo".
+  // Returns {ok, removed} so the caller can show a confirmation message.
+  const deleteLastImport = async () => {
+    if (!user || !user.id || !lastImport || !lastImport.id) {
+      return { ok: false, removed: 0 };
+    }
+    try {
+      const res = await fetch(`/api/imports/${lastImport.id}?user_id=${user.id}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) return { ok: false, removed: 0 };
+      const j = await res.json().catch(() => ({}));
+      const removed = typeof j.removed_txs === 'number' ? j.removed_txs : 0;
+      // Refresh tx list so Dashboard / Transactions reflect the rollback
+      const r2 = await fetch('/api/transactions?user_id=' + user.id);
+      if (r2.ok) setTxs(await r2.json());
+      setAiResult(null);
+      setLastImport(null);
+      return { ok: true, removed };
+    } catch (err) {
+      console.error('[deleteLastImport] failed', err);
+      return { ok: false, removed: 0 };
     }
   };
 
@@ -407,7 +461,7 @@ function App() {
           </>
         }
         {view === 'transactions' && <Transactions state={state} addTxs={addTxs} />}
-        {view === 'upload' && <Upload state={state} addTxs={addTxs} setPendingImport={setPendingImport} />}
+        {view === 'upload' && <Upload state={state} addTxs={addTxs} setPendingImport={setPendingImport} lastImport={lastImport} deleteLastImport={deleteLastImport} />}
         {view === 'budgets' && <Budgets state={state} updateCatBudget={updateCatBudget} resetCatBudgets={resetCatBudgets} />}
         {view === 'insights' &&
         <Insights
