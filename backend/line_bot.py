@@ -293,33 +293,41 @@ def _link_account(line_user_id: str, email: str) -> str:
 
         old_user_id = lu.user_id
 
-        # Move all data from the old (auto) user to the target web user, but
-        # only if the old user is the throwaway LINE account. If it was already
-        # linked to a different real web account, still re-point + move so the
-        # latest link wins (user explicitly asked to link this email).
-        moved_tx = db.query(Transaction).filter_by(user_id=old_user_id).update(
-            {"user_id": target.id}, synchronize_session=False
-        )
-        db.query(Import).filter_by(user_id=old_user_id).update(
-            {"user_id": target.id}, synchronize_session=False
-        )
-        db.query(Notification).filter_by(user_id=old_user_id).update(
-            {"user_id": target.id}, synchronize_session=False
-        )
-
-        # Re-point the LINE mapping to the web user.
-        lu.user_id = target.id
-        lu.linked_at = datetime.now(timezone.utc)
-
-        # Clean up the orphaned auto-user (and its preference) so it doesn't
-        # linger. Only delete the throwaway LINE-local account — never a real
-        # web user with a normal email.
+        # Fetch the old user first so we can decide whether moving data is safe.
         old_user = db.query(User).filter_by(id=old_user_id).first()
-        if old_user and old_user.email.endswith("@line.local") and old_user.id != target.id:
+        is_auto_user = (
+            old_user is not None
+            and old_user.email.endswith("@line.local")
+            and old_user.id != target.id
+        )
+
+        moved_tx = 0
+        if is_auto_user:
+            # Old user is the throwaway LINE auto-account (@line.local) → it only
+            # holds data that came in via LINE before linking, so it's safe to
+            # MOVE that data onto the target web user, then delete the orphan.
+            moved_tx = db.query(Transaction).filter_by(user_id=old_user_id).update(
+                {"user_id": target.id}, synchronize_session=False
+            )
+            db.query(Import).filter_by(user_id=old_user_id).update(
+                {"user_id": target.id}, synchronize_session=False
+            )
+            db.query(Notification).filter_by(user_id=old_user_id).update(
+                {"user_id": target.id}, synchronize_session=False
+            )
+            # Clean up the orphaned auto-user (and its preference) so it doesn't
+            # linger. Only the throwaway LINE-local account is ever deleted here.
             db.query(Preference).filter_by(user_id=old_user_id).delete(
                 synchronize_session=False
             )
             db.delete(old_user)
+        # else: old user is a real web account (normal email) — DO NOT move or
+        # delete anything. Account A keeps all of its own data; we only re-point
+        # the LINE mapping to B below (latest explicit link wins).
+
+        # Re-point the LINE mapping to the web user (always, both cases).
+        lu.user_id = target.id
+        lu.linked_at = datetime.now(timezone.utc)
 
         db.commit()
         log.info(
