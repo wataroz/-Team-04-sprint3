@@ -261,6 +261,9 @@ def _link_account(line_user_id: str, email: str) -> str:
     LineUser.user_id at the web user.
     """
     db = SessionLocal()
+    # Track whether linking actually succeeded so we can fire budget alerts
+    # AFTER the DB session is fully closed (mirrors the _handle_pdf pattern).
+    linked_user_id: int | None = None
     try:
         target = db.query(User).filter_by(email=email).first()
         if target is None:
@@ -283,6 +286,7 @@ def _link_account(line_user_id: str, email: str) -> str:
             )
             db.add(lu)
             db.commit()
+            linked_user_id = target.id
             return _link_success_msg(email)
 
         if lu.user_id == target.id:
@@ -334,6 +338,7 @@ def _link_account(line_user_id: str, email: str) -> str:
             "Linked LINE %s → user_id=%s (%s), moved %s txs from old user_id=%s",
             line_user_id, target.id, email, moved_tx, old_user_id,
         )
+        linked_user_id = target.id
         return _link_success_msg(email)
     except Exception as exc:
         db.rollback()
@@ -341,6 +346,17 @@ def _link_account(line_user_id: str, email: str) -> str:
         return f"❌ เชื่อมบัญชีไม่สำเร็จครับ: {exc}\nลองใหม่อีกครั้งนะครับ"
     finally:
         db.close()
+        # Fire budget alerts only after the link session is closed, so
+        # _push_budget_alerts can open its own clean session. Any failure here
+        # must NOT mask the success message already queued for return.
+        if linked_user_id is not None:
+            try:
+                _push_budget_alerts(linked_user_id)
+            except Exception:
+                log.exception(
+                    "budget alert after LINE link failed (user_id=%s)",
+                    linked_user_id,
+                )
 
 
 def _link_success_msg(email: str) -> str:
