@@ -210,13 +210,24 @@ def api_create_transactions():
             ))
         db.bulk_save_objects(rows)
         db.commit()
-        return jsonify({"created": len(rows)})
     except Exception as exc:
         db.rollback()
         log.exception("bulk insert failed")
         return jsonify({"error": str(exc)}), 500
     finally:
         db.close()
+
+    # After committing new transactions, push a LINE budget alert if this user
+    # has a linked LINE account and any category is now over budget. Done after
+    # the session closes (and outside the try so it never affects the insert
+    # result). Lazy import keeps app startup independent of the LINE bot.
+    try:
+        from backend.line_bot import _push_budget_alerts
+        _push_budget_alerts(int(user_id))
+    except Exception:
+        log.exception("budget alert after web bulk insert failed")
+
+    return jsonify({"created": len(rows)})
 
 
 # ─── Imports (audit log of statement uploads) ───────────────────────────────
@@ -358,6 +369,64 @@ def api_set_prefs(user_id: int):
         return jsonify(p.to_dict())
     finally:
         db.close()
+
+
+# ─── AI (Anthropic) ──────────────────────────────────────────────────────────
+
+# Locked API contract (do NOT change — ACHI's frontend depends on it):
+#   POST /api/ai/complete   body {"prompt": "<string>"}  →  {"text": "<string>"}
+#
+# Used by the web "AI Insights" (derived → real) and the "คุยกับ Mind" chat
+# panel, replacing the old window.claude.complete() that only existed inside
+# the Claude.ai artifact sandbox (undefined on Render → silent failures).
+
+_AI_MODEL = "claude-3-5-sonnet-latest"
+_AI_MAX_TOKENS = 1024
+_AI_MAX_PROMPT_CHARS = 12000  # guard against runaway / abusive prompts
+
+
+@app.route("/api/ai/complete", methods=["POST"])
+def api_ai_complete():
+    body = request.get_json(silent=True) or {}
+    prompt = (body.get("prompt") or "").strip()
+
+    # Empty prompt → nothing to do. Return 200 + empty text so the frontend
+    # (which falls back to null / an apology message) handles it gracefully.
+    if not prompt:
+        return jsonify({"text": ""})
+
+    # Clamp overly long prompts instead of rejecting — keeps the UX working
+    # while capping token cost on the Anthropic bill.
+    if len(prompt) > _AI_MAX_PROMPT_CHARS:
+        prompt = prompt[:_AI_MAX_PROMPT_CHARS]
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if not api_key:
+        log.warning("ANTHROPIC_API_KEY not set — /api/ai/complete returning empty text")
+        return jsonify({"text": ""})
+
+    try:
+        import anthropic  # lazy import so a missing lib never crashes startup
+    except ImportError:
+        log.error("anthropic package not installed — run pip install -r requirements.txt")
+        return jsonify({"text": ""})
+
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        resp = client.messages.create(
+            model=_AI_MODEL,
+            max_tokens=_AI_MAX_TOKENS,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        # resp.content is a list of content blocks; concatenate text blocks.
+        text = "".join(
+            getattr(block, "text", "") for block in (resp.content or [])
+        ).strip()
+        return jsonify({"text": text})
+    except Exception as exc:
+        log.exception("Anthropic API call failed")
+        # 502 + empty text: frontend already falls back to null / apology.
+        return jsonify({"text": "", "error": str(exc)}), 502
 
 
 # ─── LINE Webhook ────────────────────────────────────────────────────────────

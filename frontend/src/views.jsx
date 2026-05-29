@@ -6,6 +6,24 @@
 const { useState, useEffect, useMemo, useRef } = React;
 
 // ─────────────────────────────────────────────────────────────
+// AI bridge — calls backend /api/ai/complete (Anthropic via Flask).
+// Replaces window.claude.complete(), which only exists inside the
+// Claude.ai artifact env (undefined on Render production).
+// Returns plain text; throws on error so callers' existing
+// try/catch fallbacks still apply.
+// ─────────────────────────────────────────────────────────────
+async function aiComplete(prompt) {
+  const res = await fetch('/api/ai/complete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt })
+  });
+  if (!res.ok) throw new Error('AI request failed: ' + res.status);
+  const data = await res.json();
+  return data.text || '';
+}
+
+// ─────────────────────────────────────────────────────────────
 // Derived data — keeps every view in sync with the live tx list
 // ─────────────────────────────────────────────────────────────
 
@@ -1419,7 +1437,7 @@ function Insights({ state, openChat, aiResult, setAiResult, analyzing, setAnalyz
 Provide 4-6 items, varied across warn/good/info.\n\nData:\n${summary}\n\nReply with JSON only.`;
 
     try {
-      const text = await window.claude.complete(prompt);
+      const text = await aiComplete(prompt);
       // Try to parse JSON
       const match = text.match(/\{[\s\S]*\}/);
       if (match) {
@@ -1584,7 +1602,7 @@ function ChatPanel({ state, open, onClose }) {
     const prompt = `${sys}\n\nUser's financial data:\n${context}\n\nConversation:\n${history}\n\nMind:`;
 
     try {
-      const reply = await window.claude.complete(prompt);
+      const reply = await aiComplete(prompt);
       setMessages((m) => [...m, { role: 'ai', text: reply.trim() }]);
     } catch (e) {
       setMessages((m) => [...m, { role: 'ai', text: lang === 'th' ? 'ขออภัย ฉันยังตอบไม่ได้ตอนนี้' : 'Sorry, I can\'t reply right now.' }]);
