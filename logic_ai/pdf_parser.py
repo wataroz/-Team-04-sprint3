@@ -63,47 +63,168 @@ def detect_bank(text: str) -> str:
 
 # ─── Category inference ─────────────────────────────────────────────────────
 
+# Ordered list of (category, regex) pairs. First match wins, so put more
+# specific / higher-priority patterns first (e.g. health before groceries so
+# Watsons/Boots don't get mis-tagged, food-delivery before ride-hailing).
+#
+# Notes:
+#   - Patterns are compiled with re.IGNORECASE; we lowercase + strip extras
+#     before matching so both Thai and English work.
+#   - Use \b boundaries on short English tokens to avoid false positives.
+#   - 8-category contract shared with frontend/data.js — DO NOT add/remove
+#     categories here without coordinating with the frontend.
+_CATEGORY_RULES: list[tuple[str, re.Pattern]] = [
+    # Health & pharmacy (priority over groceries so Watsons/Boots win)
+    (
+        "health",
+        re.compile(
+            r"\b(watsons?|boots|pharmacy|drug\s*store|hospital|clinic|dental|"
+            r"bumrungrad|samitivej|bnh|bangkok\s*hospital|mahidol|rama|"
+            r"siriraj|chula|aia|allianz|axa|prudential|insurance)\b|"
+            r"วัตสัน|บูทส์|ร้านยา|ยา\s|โรงพยาบาล|รพ\.|คลินิก|ทันต|"
+            r"บำรุงราษฎร์|สมิติเวช|รามา(?:ธิบดี)?|ศิริราช|จุฬา|ประกัน(?:สุขภาพ|ชีวิต)?",
+            re.IGNORECASE,
+        ),
+    ),
+
+    # Food delivery & food-court / restaurants / cafes (must come before
+    # transport so "Bolt Food", "Grab Food", "Lineman" land in food)
+    (
+        "food",
+        re.compile(
+            r"\b(grab\s*food|grabfood|food\s*panda|foodpanda|line\s*man|lineman|"
+            r"robinhood|bolt\s*food|wongnai|food\s*court|"
+            r"starbucks|café|cafe|coffee|amazon|mcdonald'?s?|mcdo|kfc|burger\s*king|"
+            r"pizza(?:\s*hut|\s*company)?|sushi|ramen|noodle|"
+            r"after\s*you|dessert|bingsu|bakery|donut|krispy|swensen'?s?|"
+            r"shabu|sukishi|mk\s*restaurant|mk\s*gold|mk\s*live|hotpot|yakiniku|"
+            r"texas\s*chicken|bonchon|chester'?s?|santa\s*fe|s&p|sizzler)\b|"
+            r"กาแฟ|อะเมซอน|อเมซอน|สตาร์บัค|เคเอฟซี|แมค|เบเกอรี่|เค้ก|"
+            r"ร้านอาหาร|อาหาร(?:ตามสั่ง|จานเดียว)?|กระเพรา|กะเพรา|ส้มตำ|"
+            r"ก๋วยเตี๋ยว|สุกี้|ชาบู|หม่าล่า|ราเมง|ราเมน|ข้าวมันไก่|ข้าวขาหมู|"
+            r"ข้าวแกง|ผัดไทย|โจ๊ก|ก๋วยจั๊บ|เซเว่น(?=.*(?:ร้าน|อาหาร))",
+            re.IGNORECASE,
+        ),
+    ),
+
+    # Transport / fuel / ride-hailing / airlines (grab/bolt only if not "food")
+    (
+        "transport",
+        re.compile(
+            r"\b(grab(?!\s*food)|bolt(?!\s*food)|taxi|uber|gojek|"
+            r"bts|mrt|arl|airport\s*rail|skytrain|sky\s*train|expressway|tollway|"
+            r"shell|esso|ptt|caltex|bangchak|fuel|gasoline|petrol|"
+            r"thai\s*airways|air\s*asia|airasia|nok\s*air|bangkok\s*airways|"
+            r"thai\s*smile|thai\s*lion|vietjet|emirates|"
+            r"airline|airways|airport|flight)\b|"
+            r"แท็กซี่|รถไฟ(?:ฟ้า)?|รถเมล์|รถตู้|รถทัวร์|วินมอเตอร์ไซค์|"
+            r"พีทีที|บางจาก|เชลล์|เอสโซ่|คาลเท็กซ์|น้ำมัน|ปั๊ม(?:น้ำมัน)?|"
+            r"ทางด่วน|ค่าทาง|ตั๋วเครื่องบิน|สายการบิน|การบินไทย|แอร์เอเชีย|นกแอร์",
+            re.IGNORECASE,
+        ),
+    ),
+
+    # Entertainment / subscriptions / cinema / gaming
+    (
+        "entertain",
+        re.compile(
+            r"\b(netflix|spotify|youtube(?:\s*premium|\s*music)?|disney\+?|"
+            r"disney\s*plus|hbo|apple\s*music|apple\s*tv|prime\s*video|"
+            r"iqiyi|we\s*tv|wetv|viu|joox|tidal|"
+            r"major\s*cineplex|major|sf\s*cinema|sfx|sfw|cineplex|cinema|imax|"
+            r"steam(?:powered)?|ps\s*store|playstation|psn|nintendo|"
+            r"xbox|epic\s*games|garena|riot\s*games|"
+            r"karaoke|concert)\b|"
+            r"โรงหนัง|โรงภาพยนตร์|เมเจอร์|หนัง|ภาพยนตร์|เกม|คอนเสิร์ต|คาราโอเกะ",
+            re.IGNORECASE,
+        ),
+    ),
+
+    # Home & bills / utilities / rent / internet / mobile
+    (
+        "home",
+        re.compile(
+            r"\b(rent|electric(?:ity)?\s*bill|water\s*bill|wifi|internet|"
+            r"tot|ais(?:\s*fibre|\s*postpaid|\s*prepaid)?|true(?:move|\s*online|"
+            r"\s*vision|\s*id)?|dtac|3bb|nt\s*broadband|"
+            r"pea|mea|metropolitan\s*electricity|provincial\s*electricity|"
+            r"apartment|condo|condominium|dormitory|"
+            r"bill\s*payment|utility|utilities)\b|"
+            r"กฟน|กฟภ|การประปา|ประปา|ค่าไฟ(?:ฟ้า)?|ค่าน้ำ|ค่าเช่า|ค่าเน็ต|"
+            r"ทรูมูฟ|ทรูออนไลน์|ทรูวิชั่นส์|เอไอเอส|ดีแทค|"
+            r"เน็ตบ้าน|นิติบุคคล|ชำระบิล|ค่าก๊าซ|หอพัก|อพาร์ทเมนท์|คอนโด",
+            re.IGNORECASE,
+        ),
+    ),
+
+    # Groceries / supermarkets / convenience stores
+    (
+        "groceries",
+        re.compile(
+            r"\b(7[-\s]?eleven|seven\s*eleven|family\s*mart|familymart|lawson|"
+            r"mini\s*big\s*c|"
+            r"tops(?:\s*daily|\s*market|\s*super)?|big\s*c|lotus(?:\s*go\s*fresh|"
+            r"\s*express|s)?|tesco(?:\s*lotus)?|makro|villa\s*market|"
+            r"gourmet\s*market|foodland|home\s*fresh\s*mart|cj\s*more|cj\s*supermarket|"
+            r"cp\s*fresh\s*mart|cp\s*axtra|cp\s*meiji|cp\s*pork|cp\s*all|"
+            r"market|supermarket|grocery|groceries|minimart)\b|"
+            r"เซเว่น|เซเว่นอีเลฟเว่น|แฟมิลี่มาร์ท|แฟมิลี่|ตลาดสด|ตลาดนัด|"
+            r"ซูเปอร์มาร์เก็ต|มินิมาร์ท|แม็คโคร|ท็อปส์|โลตัส|บิ๊กซี|วิลล่า|กูร์เมต์",
+            re.IGNORECASE,
+        ),
+    ),
+
+    # Shopping / marketplaces / department stores / fashion
+    (
+        "shopping",
+        re.compile(
+            r"\b(shopee|lazada|jd\s*central|kaidee|amazon(?:\.com)?|aliexpress|"
+            r"uniqlo|h&m|zara|muji|nike|adidas|puma|new\s*balance|"
+            r"central(?:world|\s*world|\s*plaza|\s*department)?|robinson|"
+            r"emporium|emquartier|emsphere|paragon|siam\s*paragon|terminal\s*21|"
+            r"icon\s*siam|iconsiam|mega\s*bangna|mbk|the\s*mall|"
+            r"ikea|home\s*pro|homepro|do\s*home|dohome|index\s*living|"
+            r"power\s*buy|j\.?\s*i\.?\s*b|jaymart|advice|banana\s*it|"
+            r"daiso|miniso|loft|"
+            r"mall|plaza|store|department|outlet|boutique)\b|"
+            r"ช้อปปี้|ลาซาด้า|ห้าง(?:สรรพสินค้า)?|เซ็นทรัล|โรบินสัน|พารากอน|"
+            r"เอ็มควอเทียร์|ไอคอนสยาม|โฮมโปร|โดโฮม|พาวเวอร์บาย|"
+            r"ร้านค้า|ร้านขาย",
+            re.IGNORECASE,
+        ),
+    ),
+]
+
+
+def _normalize(s: str) -> str:
+    """Lowercase, collapse whitespace, strip leading/trailing punctuation."""
+    if not s:
+        return ""
+    out = s.lower()
+    # Replace common punctuation that splits brand names with a space so
+    # "7-Eleven" / "7-11" / "C.P." still match their patterns.
+    out = re.sub(r"[._/\\|]+", " ", out)
+    out = re.sub(r"\s+", " ", out).strip()
+    return out
+
+
 def categorize(merchant: str, _type: str, incoming: bool) -> str:
-    m = (merchant or "").lower()
+    """Map a transaction merchant string to one of the 8 fixed categories.
+
+    Returns 'income' when the transaction is incoming, otherwise tries the
+    ordered keyword rules. Unknown merchants fall back to 'other' — never
+    raises so callers can always trust the result.
+    """
     if incoming:
         return "income"
-    if re.search(
-        r"starbucks|cafe|coffee|amazon|mcdonald|kfc|burger|pizza|sushi|noodle|food|panda|grabfood|c scan b|"
-        r"กาแฟ|อาหาร|กระเพรา|กะเพรา|ส้มตำ|ก๋วยเตี๋ยว|สุกี้|ข้าว|เนื้อ|หมู|ไก่|ทอด|ผัด|ต้ม|ราด",
-        m,
-    ):
-        return "food"
-    if re.search(
-        r"grab(?!food)|bolt|taxi|bts|mrt|shell|esso|ptt|caltex|fuel|gas|skytrain|"
-        r"พีทีที|บางจาก|รถ|แท็กซี่|น้ำมัน|ปั๊ม",
-        m,
-    ):
-        return "transport"
-    if re.search(
-        r"shopee|lazada|uniqlo|nike|adidas|emsphere|mall|paragon|central|emporium|ikea|store|shop|"
-        r"ช้อปปี้|ลาซาด้า|ห้าง",
-        m,
-    ):
-        return "shopping"
-    if re.search(
-        r"rent|electric|water|wifi|tot|ais|true|dtac|aws|pea|mea|apartment|condo|"
-        r"ทรูมูฟ|เอไอเอส|ดีแทค|ค่าไฟ|ค่าน้ำ|เน็ต|เติมเงิน|นิติบุคคล|ชำระบิล|bill payment",
-        m,
-    ):
-        return "home"
-    if re.search(r"netflix|spotify|cineplex|cinema|youtube|disney|apple music|hbo|movie|หนัง", m):
-        return "entertain"
-    if re.search(
-        r"tops|big c|lotus|tesco|makro|villa|gourmet|7-eleven|7-11|cj |cp axtra|"
-        r"เซเว่น|ตลาด|มินิมาร์ท|family mart|watson|วัตสัน",
-        m,
-    ):
-        return "groceries"
-    if re.search(
-        r"pharmacy|boots|hospital|clinic|aia|allianz|axa|insurance|โรงพยาบาล|คลินิก|ร้านยา|ประกัน",
-        m,
-    ):
-        return "health"
+
+    m = _normalize(merchant)
+    if not m:
+        return "other"
+
+    for cat, pat in _CATEGORY_RULES:
+        if pat.search(m):
+            return cat
     return "other"
 
 
