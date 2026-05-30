@@ -152,7 +152,9 @@ _CATEGORY_RULES: list[tuple[str, re.Pattern]] = [
             r"bill\s*payment|utility|utilities)\b|"
             r"กฟน|กฟภ|การประปา|ประปา|ค่าไฟ(?:ฟ้า)?|ค่าน้ำ|ค่าเช่า|ค่าเน็ต|"
             r"ทรูมูฟ|ทรูออนไลน์|ทรูวิชั่นส์|เอไอเอส|ดีแทค|"
-            r"เน็ตบ้าน|นิติบุคคล|ชำระบิล|ค่าก๊าซ|หอพัก|อพาร์ทเมนท์|คอนโด",
+            r"เน็ตบ้าน|นิติบุคคล|ชำระบิล|ค่าก๊าซ|หอพัก|อพาร์ทเมนท์|คอนโด|"
+            r"ค่าธรรมเนียม(?:การ(?:ถอน|โอน|ใช้บริการ))?|"
+            r"\batm\s*fee\b|service\s*charge|ค่าบริการธนาคาร",
             re.IGNORECASE,
         ),
     ),
@@ -311,21 +313,75 @@ _GSB_NOISE = re.compile(
 )
 
 
+# Known GSB channel/marker tokens (not human-readable merchant — strip from
+# extra info so brand names remain).
+_GSB_MARKERS = re.compile(
+    r"\b(MyMo|Transaction)\b",
+    re.I,
+)
+
+
+def _gsb_extra(desc: str, label_keywords: list[str]) -> str:
+    """Pull human-readable extra info (merchant/payee) out of a GSB
+    description after stripping channel markers ("MyMo", "Transaction"),
+    SAV account hints ("from/to SAV"), and the label keywords already encoded
+    into the generic label. Empty string if nothing useful remains.
+
+    Conservative: we only strip known noise; we never invent text.
+    """
+    out = _GSB_MARKERS.sub(" ", desc)
+    # Drop GSB-style SAV account hints — they're internal account tags, not
+    # merchant names, so they pollute categorize() input.
+    out = re.sub(r"\b(from|to)\b\s+SAV\b", " ", out, flags=re.I)
+    # Drop short codes wrapped in parens like "(QR)" — they don't help
+    # categorize and we add them back via the label.
+    out = re.sub(r"\([^)]{1,15}\)", " ", out)
+    for kw in label_keywords:
+        out = re.sub(kw, " ", out, flags=re.I)
+    out = re.sub(r"[\s,/\-]+", " ", out).strip()
+    # Reject leftovers that are just digits or empty — not informative.
+    if not out or re.fullmatch(r"[\d\s.]+", out):
+        return ""
+    return out
+
+
 def _gsb_desc_map(desc: str) -> str:
-    if re.search(r"C Scan B", desc, re.I):
-        return "C Scan B (QR)"
-    if re.search(r"Bill Payment", desc, re.I):
-        return "ชำระบิล"
+    """Map a raw GSB description line to a human label, preserving any
+    additional merchant/payee info found in the raw text so categorize() can
+    still pick up brand names (e.g. "C Scan B STARBUCKS" → food).
+
+    Income labels (SAV Deposit / Interest / Transfer+Deposit) stay as plain
+    labels because the incoming flag routes them to "income" anyway.
+    """
+    # Income paths — keep plain label (incoming flag handles categorization).
     if re.search(r"SAV Deposit", desc, re.I):
         return "รับโอนเงิน"
     if re.search(r"Interest|ดอกเบี้ย", desc, re.I):
         return "ดอกเบี้ย"
     if re.search(r"Transfer", desc, re.I) and re.search(r"Deposit", desc, re.I):
         return "รับโอนเงิน"
-    if re.search(r"Transfer", desc, re.I):
-        return "โอนเงิน"
-    if re.search(r"Payment", desc, re.I):
-        return "ชำระเงิน"
+
+    label: str | None = None
+    label_keywords: list[str] = []
+
+    if re.search(r"C Scan B", desc, re.I):
+        label = "C Scan B (QR)"
+        label_keywords = [r"C\s*Scan\s*B"]
+    elif re.search(r"Bill Payment", desc, re.I):
+        label = "ชำระบิล"
+        label_keywords = [r"Bill\s*Payment"]
+    elif re.search(r"Transfer", desc, re.I):
+        label = "โอนเงิน"
+        label_keywords = [r"Transfer"]
+    elif re.search(r"Payment", desc, re.I):
+        label = "ชำระเงิน"
+        label_keywords = [r"Payment"]
+
+    if label is not None:
+        extra = _gsb_extra(desc, label_keywords)
+        return f"{label} {extra}".strip() if extra else label
+
+    # Fallback: no known label — strip generic noise only (legacy behaviour).
     out = re.sub(r"^(MyMo\s+|C Scan B\s+)", "", desc, flags=re.I)
     out = re.sub(r"\b(from|to)\b\s+SAV\b", "", out, flags=re.I)
     out = re.sub(r"\s+Transaction\s*$", "", out, flags=re.I)
@@ -376,27 +432,81 @@ _KTB_NOISE = re.compile(
 _KTB_TIME = re.compile(r"^\d{2}:\d{2}")
 
 
+# Known KTB internal marker codes (not human-readable — strip from extra info).
+_KTB_MARKERS = re.compile(
+    r"\b(MORISD|MORWSW|MORISW|MORPSW|NBSDT|NBSWT|NMIDSD|NMIDSW|CGSWP|CGSWD)\b",
+    re.I,
+)
+
+
+def _ktb_extra(desc: str, label_keywords: list[str]) -> str:
+    """Pull human-readable extra info (merchant name, payee) out of a KTB
+    description, after stripping marker codes, paren-wrapped codes, and the
+    label keywords we already encoded into the generic label. Empty string if
+    nothing useful remains.
+
+    Conservative: we only strip known noise; we never invent text.
+    """
+    out = _KTB_MARKERS.sub(" ", desc)
+    # Drop short codes wrapped in parens like "(NMIDSD)" or "(KTB)" — they
+    # don't help categorize and pollute the merchant string.
+    out = re.sub(r"\([^)]{1,15}\)", " ", out)
+    for kw in label_keywords:
+        out = re.sub(kw, " ", out, flags=re.I)
+    # Collapse leftover whitespace + trim trailing punctuation/separators.
+    out = re.sub(r"[\s,/\-]+", " ", out).strip()
+    # Reject leftovers that are just digits or single short tokens — not
+    # informative enough to categorize on.
+    if not out or re.fullmatch(r"[\d\s.]+", out):
+        return ""
+    return out
+
+
 def _ktb_merchant(desc: str) -> str:
+    """Map a raw KTB description line to a human label, preserving any
+    additional merchant/payee info found in the raw text so categorize() can
+    still pick up brand names (e.g. "ชำระ QR Code STARBUCKS" → food).
+    """
+    label: str | None = None
+    label_keywords: list[str] = []
+
     if re.search(r"เงินโอนเข้า.*พร้อมเพย์|MORISD|NMIDSD", desc, re.I):
-        return "รับโอน (PromptPay)"
-    if re.search(r"เงินโอนเข้า|NBSDT", desc, re.I):
-        return "รับโอนเงิน"
-    if re.search(r"โอนเงินออก.*พร้อมเพย์|MORWSW|MORISW|NMIDSW", desc, re.I):
-        return "โอนออก (PromptPay)"
-    if re.search(r"โอนเงินออก|NBSWT", desc, re.I):
-        return "โอนเงินออก"
-    if re.search(r"CGSWP", desc, re.I):
-        return "ชำระ QR Code"
-    if re.search(r"จ่ายค่าสินค้า|MORPSW", desc, re.I):
-        return "ชำระค่าสินค้า/บริการ"
-    if re.search(r"ถอนเงิน", desc, re.I):
-        return "ถอนเงินสด"
-    if re.search(r"ฝากเงิน", desc, re.I):
-        return "ฝากเงิน"
-    if re.search(r"ดอกเบี้ย", desc, re.I):
-        return "ดอกเบี้ย"
-    if re.search(r"ค่าธรรมเนียม", desc, re.I):
-        return "ค่าธรรมเนียม"
+        label = "รับโอน (PromptPay)"
+        label_keywords = [r"เงินโอนเข้า", r"พร้อมเพย์", r"รับโอน"]
+    elif re.search(r"เงินโอนเข้า|NBSDT", desc, re.I):
+        label = "รับโอนเงิน"
+        label_keywords = [r"เงินโอนเข้า", r"รับโอน"]
+    elif re.search(r"โอนเงินออก.*พร้อมเพย์|MORWSW|MORISW|NMIDSW", desc, re.I):
+        label = "โอนออก (PromptPay)"
+        label_keywords = [r"โอนเงินออก", r"พร้อมเพย์", r"โอนออก"]
+    elif re.search(r"โอนเงินออก|NBSWT", desc, re.I):
+        label = "โอนเงินออก"
+        label_keywords = [r"โอนเงินออก", r"โอนออก"]
+    elif re.search(r"CGSWP", desc, re.I):
+        label = "ชำระ QR Code"
+        label_keywords = [r"ชำระ", r"QR\s*Code", r"QR"]
+    elif re.search(r"จ่ายค่าสินค้า|MORPSW", desc, re.I):
+        label = "ชำระค่าสินค้า/บริการ"
+        label_keywords = [r"จ่ายค่าสินค้า", r"ชำระค่าสินค้า", r"บริการ"]
+    elif re.search(r"ถอนเงิน", desc, re.I):
+        label = "ถอนเงินสด"
+        label_keywords = [r"ถอนเงินสด", r"ถอนเงิน"]
+    elif re.search(r"ฝากเงิน", desc, re.I):
+        label = "ฝากเงิน"
+        label_keywords = [r"ฝากเงิน"]
+    elif re.search(r"ดอกเบี้ย", desc, re.I):
+        label = "ดอกเบี้ย"
+        label_keywords = [r"ดอกเบี้ย"]
+    elif re.search(r"ค่าธรรมเนียม", desc, re.I):
+        label = "ค่าธรรมเนียม"
+        label_keywords = [r"ค่าธรรมเนียม"]
+
+    if label is not None:
+        extra = _ktb_extra(desc, label_keywords)
+        return f"{label} {extra}".strip() if extra else label
+
+    # No known label matched — fall back to the original cleaned-first-token
+    # behaviour so we don't change existing test fixtures.
     cleaned = re.sub(r"\s*\([A-Z]+\)\s*", " ", desc).split(" ")
     return cleaned[0] if cleaned and cleaned[0] else desc
 
