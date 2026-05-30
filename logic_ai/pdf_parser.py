@@ -98,11 +98,23 @@ _CATEGORY_RULES: list[tuple[str, re.Pattern]] = [
             r"pizza(?:\s*hut|\s*company)?|sushi|ramen|noodle|"
             r"after\s*you|dessert|bingsu|bakery|donut|krispy|swensen'?s?|"
             r"shabu|sukishi|mk\s*restaurant|mk\s*gold|mk\s*live|hotpot|yakiniku|"
-            r"texas\s*chicken|bonchon|chester'?s?|santa\s*fe|s&p|sizzler)\b|"
-            r"กาแฟ|อะเมซอน|อเมซอน|สตาร์บัค|เคเอฟซี|แมค|เบเกอรี่|เค้ก|"
+            r"texas\s*chicken|bonchon|chester'?s?|santa\s*fe|s&p|sizzler|"
+            r"smoothie|juice\s*bar)\b|"
+            r"กาแฟ(?:เย็น|สด|ดำ|โบราณ|นม)?|อะเมซอน|อเมซอน|สตาร์บัค|เคเอฟซี|แมค|"
+            r"เบเกอรี่|เค้ก|โดนัท|ขนมปัง|บิงซู|ลูกชิ้น|ปิ้งย่าง|"
             r"ร้านอาหาร|อาหาร(?:ตามสั่ง|จานเดียว)?|กระเพรา|กะเพรา|ส้มตำ|"
-            r"ก๋วยเตี๋ยว|สุกี้|ชาบู|หม่าล่า|ราเมง|ราเมน|ข้าวมันไก่|ข้าวขาหมู|"
-            r"ข้าวแกง|ผัดไทย|โจ๊ก|ก๋วยจั๊บ|เซเว่น(?=.*(?:ร้าน|อาหาร))",
+            r"ก๋วยเตี๋ยว(?:เรือ)?|สุกี้|ชาบู|หม่าล่า|ราเมง|ราเมน|ข้าวมันไก่|ข้าวขาหมู|"
+            r"ข้าวแกง|ผัดไทย|ผัดซีอิ๊ว|ราดหน้า|โจ๊ก|ก๋วยจั๊บ|"
+            r"ขนมจีน|เย็นตาโฟ|หมูแดง|หมูกรอบ|หมูกระทะ|"
+            r"มาม่า(?:ผัด|ต้มยำ|หมูสับ|คัพ)?|บะหมี่(?:กึ่งสำเร็จรูป|น้ำ|แห้ง|เกี๊ยว|หมูแดง)?|"
+            # Tea variants — no \b because Thai script has no ASCII word
+            # boundaries. Bare "ชา" alone won't match (suffix is required),
+            # so "ชายชาตรี"/"ชา (พ.ศ.)" stay safe.
+            r"ชา(?:นม(?:ไข่มุก)?|เย็น|ไทย|เขียว|มะนาว|ดำ)|"
+            r"ชานมไข่มุก|น้ำหวาน|น้ำผลไม้|สมูทตี้|"
+            r"ครัว(?:คุณ|บ้าน|แม่|ป้า|ลุง|พี่|น้อง)|"
+            r"อิ่มอร่อย|เคียงมอ|"
+            r"เซเว่น(?=.*(?:ร้าน|อาหาร))",
             re.IGNORECASE,
         ),
     ),
@@ -163,11 +175,12 @@ _CATEGORY_RULES: list[tuple[str, re.Pattern]] = [
     (
         "groceries",
         re.compile(
-            r"\b(7[-\s]?eleven|seven\s*eleven|family\s*mart|familymart|lawson|"
+            r"\b(7[-\s]?eleven|7[-\s]11|seven\s*eleven|family\s*mart|familymart|lawson|"
             r"mini\s*big\s*c|"
             r"tops(?:\s*daily|\s*market|\s*super)?|big\s*c|lotus(?:\s*go\s*fresh|"
             r"\s*express|s)?|tesco(?:\s*lotus)?|makro|villa\s*market|"
-            r"gourmet\s*market|foodland|home\s*fresh\s*mart|cj\s*more|cj\s*supermarket|"
+            r"gourmet\s*market|foodland|home\s*fresh\s*mart|"
+            r"cj\s+(?:more|supermarket|axtra|\d{2,})|"
             r"cp\s*fresh\s*mart|cp\s*axtra|cp\s*meiji|cp\s*pork|cp\s*all|"
             r"market|supermarket|grocery|groceries|minimart)\b|"
             r"เซเว่น|เซเว่นอีเลฟเว่น|แฟมิลี่มาร์ท|แฟมิลี่|ตลาดสด|ตลาดนัด|"
@@ -285,6 +298,12 @@ def parse_kbank(raw: str) -> list[dict]:
             r"ต่างธนาคาร|MyMo by GHB|SCB EASY|Krungthai NEXT|Bualuang mBanking)\s*",
             "", merchant, flags=re.I,
         )
+        # Strip KBank QR/bill payment noise prefixes — keep real merchant name only.
+        # Patterns seen on real statements: "เพื่อชำระ Ref X2225 <merchant>",
+        # "Ref X1234 <merchant>", "Ref: 1234 <merchant>".
+        merchant = re.sub(r"^เพื่อชำระ\s+Ref\.?\s*:?\s*X?\d+\s+", "", merchant, flags=re.I)
+        merchant = re.sub(r"^Ref\.?\s*:?\s*X?\d+\s+", "", merchant, flags=re.I)
+        merchant = re.sub(r"^เพื่อชำระ\s+", "", merchant, flags=re.I)
         merchant = re.sub(r"^(จาก|โอนไป)\s+(?:[A-Z]{2,5}\s+)?(?:พร้อมเพย์\s+)?(?:X\d+\s+)?", "", merchant)
         merchant = re.sub(r"\(\s*ชื่อบัญชี:[^)]*\)?", "", merchant)
         merchant = merchant.replace("++", "")
