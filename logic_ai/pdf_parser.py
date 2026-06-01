@@ -164,7 +164,7 @@ _CATEGORY_RULES: list[tuple[str, re.Pattern]] = [
             r"bill\s*payment|utility|utilities)\b|"
             r"กฟน|กฟภ|การประปา|ประปา|ค่าไฟ(?:ฟ้า)?|ค่าน้ำ|ค่าเช่า|ค่าเน็ต|"
             r"ทรูมูฟ|ทรูออนไลน์|ทรูวิชั่นส์|เอไอเอส|ดีแทค|"
-            r"เน็ตบ้าน|นิติบุคคล|ชำระบิล|ค่าก๊าซ|หอพัก|อพาร์ทเมนท์|คอนโด|"
+            r"เน็ตบ้าน|นิติบุคคล|ชำระบิล|จ่ายบิล|ค่าก๊าซ|หอพัก|อพาร์ทเมนท์|คอนโด|"
             r"ค่าธรรมเนียม(?:การ(?:ถอน|โอน|ใช้บริการ))?|"
             r"\batm\s*fee\b|service\s*charge|ค่าบริการธนาคาร",
             re.IGNORECASE,
@@ -576,22 +576,132 @@ _SCB_NOISE = re.compile(
 )
 
 
+# Known SCB internal marker tokens — bank codes (English + Thai),
+# channel/scheme tags, top-up ref ids. Not human-readable merchant info;
+# strip from extra so brand names can survive the cleanup pass.
+_SCB_MARKERS = re.compile(
+    r"\b(KBANK|KTB|BBL|SCB|GSB|TMB|TTB|BAY|KKBANK|KK|CIMB|UOB|LH|TISCO|ICBC|TBANK|BAAC|"
+    r"PromptPay|พร้อมเพย์|Transfer|TRANSFER)\b|"
+    r"WIDx\d+|"
+    r"กสิกรไทย|กรุงไทย|กรุงเทพ|ไทยพาณิชย์|ออมสิน|กรุงศรี|ธ\.?ก\.?ส\.?",
+    re.I,
+)
+
+
+def _scb_extra(desc: str, label_keywords: list[str]) -> str:
+    """Pull human-readable extra info (merchant/payee name) out of an SCB
+    description after stripping bank codes, masked account hints ("x1234",
+    "X9999", "/X1234"), long PAY ref ids, paren-wrapped codes, and the label
+    keywords already encoded into the generic label. Empty string if nothing
+    useful remains.
+
+    Conservative: we only strip known noise; we never invent text. If only
+    noise is left we return "" so the caller keeps the safe label.
+    """
+    out = _SCB_MARKERS.sub(" ", desc)
+    # Drop SCB-style masked account hints — both "X9999" (uppercase) and
+    # "x9999" (lowercase, e.g. "KBANK xNNNN"), plus "/X9999" form.
+    out = re.sub(r"/X\d+", " ", out)
+    out = re.sub(r"\b[xX]\d{3,}\b", " ", out)
+    # Drop long ref ids (PAY <10+ digit ref> …) — never merchant info.
+    out = re.sub(r"\b\d{10,}\b", " ", out)
+    # Drop short codes wrapped in parens like "(KBANK)" / "(X1234)" — they
+    # don't help categorize and pollute the merchant string.
+    out = re.sub(r"\([^)]{1,15}\)", " ", out)
+    for kw in label_keywords:
+        out = re.sub(kw, " ", out, flags=re.I)
+    # Collapse leftover whitespace + trim separators.
+    out = re.sub(r"[\s,/\-]+", " ", out).strip()
+    # Reject leftovers that are just digits/dots — not informative.
+    if not out or re.fullmatch(r"[\d\s.]+", out):
+        return ""
+    return out
+
+
+# Bank-name → display label map for the "<bank> (<CODE>) /X####" pattern
+# where SCB statement shows only an account ref but no person/merchant name.
+_SCB_BANK_NAMES = (
+    "กสิกรไทย",
+    "กรุงไทย",
+    "กรุงเทพ",
+    "ไทยพาณิชย์",
+    "ออมสิน",
+    "กรุงศรี",
+)
+
+
 def _scb_merchant(desc: str) -> str:
     if not desc:
         return "ธุรกรรม"
-    d = re.sub(r"/X\d+\s*", "", desc)
-    d = re.sub(r"\s+", " ", d).strip()
+    d = re.sub(r"\s+", " ", desc).strip()
+
+    # (a) PAY <ref> <merchant> — debit-card POS. Keep merchant name only.
     if re.match(r"^PAY\s+", d, re.I):
-        return re.sub(r"^PAY\s+\d+\s*", "", d, flags=re.I).strip() or "ชำระเงิน"
+        m = re.match(r"^PAY\s+\d+\s*(.*)$", d, re.I)
+        rest = (m.group(1) if m else "").strip()
+        return rest or "ชำระเงิน"
+
+    # Legacy: interest credit
     if re.match(r"^จากระบบเงินฝาก", d):
         return "ดอกเบี้ย"
-    if re.search(r"กสิกรไทย|KBANK", d, re.I):
-        return "รับโอน (K-Bank)"
-    if re.search(r"กรุงไทย|KTB", d, re.I):
-        return "รับโอน (กรุงไทย)"
-    if re.search(r"กรุงเทพ|BBL", d, re.I):
-        return "รับโอน (กรุงเทพ)"
-    return d
+
+    # (b) เติมเงิน WIDx#### <channel> — keep channel name (e.g. "K Plus W").
+    m = re.match(r"^เติมเงิน\s+WIDx\d+[/\s]*(.*)$", d, re.I)
+    if m:
+        ch = m.group(1).strip(" /")
+        return f"เติมเงิน {ch}".strip() if ch else "เติมเงิน"
+
+    # (f) "<ธนาคารไทย> (<CODE>) /X####" — inter-bank ref only, no person.
+    # MUST come before (c)/(d) because it shares bank-name tokens.
+    m = re.match(
+        r"^(" + "|".join(_SCB_BANK_NAMES) + r"|ธ\.?ก\.?ส\.?)\s*"
+        r"\(([A-Z]{2,6})\)\s*/X\d+\s*$",
+        d,
+    )
+    if m:
+        return f"รับโอน ({m.group(1)})"
+
+    # (e) "จ่ายบิล <ผู้รับ>" — bill payment. Keep the "จ่ายบิล" prefix so
+    # categorize() can route to home, while a merchant inside (e.g. "วัตสัน")
+    # still wins via earlier ordered rules (health checked before home).
+    if re.match(r"^จ่ายบิล\s+", d):
+        return d
+
+    # (d) "รับโอนจาก <BANK> x#### <ชื่อ>" — incoming transfer with payer name.
+    m = re.match(r"^รับโอนจาก\s+([A-Z]{2,6})\s+x\d+\s*(.*)$", d, re.I)
+    if m:
+        bank = m.group(1).upper()
+        name = m.group(2).strip()
+        return f"รับโอนจาก ({bank}) {name}".strip() if name else f"รับโอนจาก ({bank})"
+
+    # (c) "โอนไป <BANK> x#### <ชื่อ>" — outgoing transfer with payee name.
+    m = re.match(r"^โอนไป\s+([A-Z]{2,6})\s+x\d+\s*(.*)$", d, re.I)
+    if m:
+        bank = m.group(1).upper()
+        name = m.group(2).strip()
+        return f"โอนไป ({bank}) {name}".strip() if name else f"โอนไป ({bank})"
+
+    # Legacy inter-bank fallback (kept for back-compat with previous fixtures
+    # where description was a free-form Thai bank name without the new
+    # KBANK/KTB+xNNNN tokens). Drops "/X####" then routes via _scb_extra.
+    legacy = re.sub(r"/X\d+\s*", "", d).strip()
+    label: str | None = None
+    label_keywords: list[str] = []
+    if re.search(r"กสิกรไทย|KBANK", legacy, re.I):
+        label = "รับโอน (K-Bank)"
+        label_keywords = [r"กสิกรไทย", r"KBANK", r"รับโอน"]
+    elif re.search(r"กรุงไทย|KTB", legacy, re.I):
+        label = "รับโอน (กรุงไทย)"
+        label_keywords = [r"กรุงไทย", r"KTB", r"รับโอน"]
+    elif re.search(r"กรุงเทพ|BBL", legacy, re.I):
+        label = "รับโอน (กรุงเทพ)"
+        label_keywords = [r"กรุงเทพ", r"BBL", r"รับโอน"]
+
+    if label is not None:
+        extra = _scb_extra(legacy, label_keywords)
+        return f"{label} {extra}".strip() if extra else label
+
+    return legacy
 
 
 def _scb_prev_desc(lines: list[str], i: int) -> str:
