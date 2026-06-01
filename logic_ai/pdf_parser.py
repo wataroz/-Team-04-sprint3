@@ -20,7 +20,7 @@ from typing import Iterable
 import pdfplumber
 
 
-# ─── Text extractions ────────────────────────────────────────────────────────
+# ─── Text extraction ────────────────────────────────────────────────────────
 
 def extract_pdf_text(file_bytes: bytes) -> str:
     """Extract text from PDF, line-grouped by Y coordinate (matches pdf.js layout)."""
