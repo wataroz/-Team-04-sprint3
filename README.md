@@ -22,3 +22,30 @@
 | Chitsanupong | Frontend | UI | Screenshot UI | branches:feature/flask-react/frontend |
 | Techit | UX/UI | Presentation | Screenshot Prototype | branches:feature/flask-react/ux_ui |  
 | Peerapat | Logic-ai | Ai Dev | Notebook (.ipynb) + Model Result | branches:feature/flask-react/logic_ai |
+
+## Day 2 Evidence Log
+
+| Name | Role | What I did today | Evidence Link/File | Status |
+|---|---|---|---|---|
+| Peerawas | Backend |  |  | Done / Doing / Blocked |
+|  |  |  |  | Done / Doing / Blocked |
+|  |  |  |  |  |
+|  |  |  |  |  |
+
+## Day 3 Evidence Log
+
+| Name | Role | What I did today | Evidence Link/File | Status |
+|---|---|---|---|---|
+| Peerawas | Backend |  |  | Done / Doing / Blocked |
+|  |  |  |  | Done / Doing / Blocked |
+|  |  |  |  |  |
+|  |  |  |  |  |
+
+## Day 4 Evidence Log
+
+| Name | Role | What I did today | Evidence Link/File | Status |
+|---|---|---|---|---|
+| Peerawas | Backend | bot line |  | Done / Doing / Blocked |
+|  |  |  |  | Done / Doing / Blocked |
+|  |  |  |  |  |
+|  |  |  |  |  |
