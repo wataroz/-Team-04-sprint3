@@ -27,7 +27,7 @@
 
 | Name | Role | What I did today | Evidence Link/File | Status |
 |---|---|---|---|---|
-| Peerawas | Backend |  |  | Done / Doing / Blocked |
+| Peerawas | Backend | Setup repo | READ.md | Done:Setup repo / Doing:database schema / Blocked:- |
 |  |  |  |  | Done / Doing / Blocked |
 |  |  |  |  |  |
 |  |  |  |  |  |
@@ -36,7 +36,7 @@
 
 | Name | Role | What I did today | Evidence Link/File | Status |
 |---|---|---|---|---|
-| Peerawas | Backend |  |  | Done / Doing / Blocked |
+| Peerawas | Backend | database schema | branches:feature/flask-react/backend/db.py | Done:database schema / Doing:database schema / Blocked:- |
 |  |  |  |  | Done / Doing / Blocked |
 |  |  |  |  |  |
 |  |  |  |  |  |
@@ -45,7 +45,7 @@
 
 | Name | Role | What I did today | Evidence Link/File | Status |
 |---|---|---|---|---|
-| Peerawas | Backend | bot line |  | Done / Doing / Blocked |
+| Peerawas | Backend | bot line | branches:feature/flask-react/backend/line_bot.py | Done:line_bot.py / Doing:- / Blocked:- |
 |  |  |  |  | Done / Doing / Blocked |
 |  |  |  |  |  |
 |  |  |  |  |  |
