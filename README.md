@@ -30,7 +30,7 @@
 | Peerawas | Backend | Setup repo | READ.md | Done:Setup repo / Doing:database schema / Blocked:- |
 | Chisanupong | Frontend | Create react spa serve | branches:feature/flask-react/frontend/src/app.jsx, views.jsx, data.js, auth.jsx | Done:react spa serve / Doing:Dashboard Chart.js screenshot final + data flow test / Blocked:- |
 |  |  |  |  |  |
-|  |  |  |  |  |
+| Peerapat | Logic-ai |  Implement parse_statement() + detect_bank() for KBank PDF  | branches:feature/flask-react/logic_ai/pdf_parser.py | | Done: KBank parser / Doing: GSB parser / Blocked:- |
 
 ## Day 3 Evidence Log
 
@@ -39,7 +39,7 @@
 | Peerawas | Backend | database schema | branches:feature/flask-react/backend/db.py | Done:database schema / Doing:database schema / Blocked:- |
 | Chisanupong | Frontend | เชื่อมต่อ React Dashboard กับ Flask API และทดสอบการแสดงผลข้อมูลผ่าน Chart.js | Screenshot Dashboard และ GitHub commit บน branch feature/flask-react | Done:Form → API → Database → Dashboard ทำงานได้ / Doing:เก็บ Screenshot การ Integration และปรับ UI สำหรับ Demo / Blocked:- |
 |  |  |  |  |  |
-|  |  |  |  |  |
+| Peerapat | Logic-ai | Add GSB, KTB, SCB bank parsers + categorize() with 8 categories (regex keyword matching) | branches:feature/flask-react/logic_ai/pdf_parser.py | Done: 4-bank parsers / Doing: category accuracy test / Blocked:- |
 
 ## Day 4 Evidence Log
 
@@ -48,4 +48,4 @@
 | Peerawas | Backend | bot line | branches:feature/flask-react/backend/line_bot.py | Done:line_bot.py / Doing:- / Blocked:- |
 | Chisanupong | Frontend | ทดสอบระบบ Frontend แบบ End-to-End | Demo Website, Screenshot UI และ GitHub Repository | Done:Dashboard และ Frontend พร้อมสำหรับ Demo / Doing:- / Blocked:- |
 |  |  |  |  |  |
-|  |  |  |  |  |
+| Peerapat | Logic-ai | Test PDF parsing with sample statements, record results in Notebook (.ipynb) + integrate with /api/parse-pdf endpoint | branches:feature/flask-react/logic_ai/ Notebook (.ipynb) + Model Result | Done: parser integration / Doing: edge case fix / Blocked:-  |
