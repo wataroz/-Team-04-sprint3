@@ -41,7 +41,7 @@
 | 📊 **Dashboard** | KPI cards, sparkline 30 วัน, donut chart, recent transactions |
 | 💳 **Transactions** | ค้นหา/กรอง/จัดเรียงธุรกรรมทั้งหมด |
 | 📤 **Upload Statement** | ลากไฟล์ PDF → parse + auto-categorize |
-| 🔍 **AI Insights** | คะแนนสุขภาพการเงิน + Insight cards จากข้อมูลจริง |
+| 🔍 **AI Insights** | คะแนนการเงิน + Insight cards จากข้อมูลจริง |
 | 💬 **Chat with Mind** | ถามเรื่องการเงินกับ AI assistant |
 | 🔔 **Notifications** | ประวัติการแจ้งเตือนทั้งหมด |
 | 🎨 **Tweaks Panel** | ปรับสี/ภาษา/สกุลเงิน/density ตามใจ |
