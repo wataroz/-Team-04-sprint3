@@ -1,165 +1,138 @@
-# Sprint 3 — แผน Account Linking (Web ↔ LINE) + AI Insight จริง + LINE แจ้งเตือนเกินงบ
+# Sprint 3 — Closeout Summary: Account Linking + AI Insight + Budget Alert (+ งานเสริมเกินแผน)
 
-> เอกสารวางแผนโดย PM (Team 04, Sprint 3). ห้ามถือเป็นโค้ด — เป็น spec ให้ AJ/ACHI/WA/BEST เอาไปทำ
-> **เวอร์ชัน FINAL** — ปรับตามการตัดสินใจของ user (29 พ.ค. 2026)
-> Sprint Goal: ผู้ใช้บันทึก/อัปโหลดรายจ่าย → เห็น Dashboard + insight จาก Claude API จริง + LINE Bot แจ้งเตือนเกินงบ
+> เอกสารปิด Sprint โดย PM (Team 04, Sprint 3)
+> **เวอร์ชัน FINAL — สรุปหลังปิด Sprint** (อัปเดต 1 มิ.ย. 2026)
+> เปลี่ยนสถานะเอกสารจาก "แผน" → "สรุปสิ่งที่ทำจริง" หลังปิด Sprint Goal ครบ 6/6 ฟีเจอร์
+> Sprint Goal: ผู้ใช้บันทึก/อัปโหลดรายจ่าย → เห็น Dashboard + insight จาก AI จริง + LINE Bot แจ้งเตือนเกินงบ — **ผ่านครบทุกข้อ**
 
 ---
 
-## 0. การตัดสินใจของ user (FINAL — ยึดตามนี้)
+## 0. สถานะ Sprint Goal — ครบ 6/6
+
+| # | เป้าหมาย | สถานะ |
+|---|---------|------|
+| 1 | Email-based account linking (LINE ↔ web) | ผ่าน |
+| 2 | AI Insight endpoint จริง (production) | ผ่าน |
+| 3 | AI Chat ("คุยกับ Mind") เรียก backend จริง | ผ่าน |
+| 4 | LINE Budget alert เมื่อใช้เกินงบ | ผ่าน |
+| 5 | คำสั่ง "งบ"/budget ใน LINE | ผ่าน |
+| 6 | UI เชื่อม LINE + loading/error states | ผ่าน |
+
+ผลรวม: deploy ขึ้น production (Render) ใช้งานได้จริงทั้งเว็บและ LINE OA
+
+---
+
+## 1. การตัดสินใจของ user (FINAL — ยึดตามนี้)
 
 | # | ประเด็น | สิ่งที่เลือก |
 |---|---------|-------------|
 | 1 | วิธีเชื่อม account | **ผูกด้วย email (ตัวเลือก B)** — พิมพ์ email ใน LINE → หา User → set `LineUser.user_id` + ย้าย txs เดิม. **ตัด OTP/LinkCode ออก** |
-| 2 | AI insight | **เพิ่ม backend Anthropic endpoint จริง (ตัวเลือก 2)** — `POST /api/ai/...` เรียก Anthropic ด้วย `ANTHROPIC_API_KEY` แล้วแก้ frontend ให้ fetch แทน `window.claude`. เพิ่ม scope ~1 วัน |
+| 2 | AI insight | เพิ่ม backend endpoint จริง — `POST /api/ai/...` แทน `window.claude` |
+| 3 | **AI provider** (ตัดสินกลาง Sprint) | เปลี่ยนจาก provider เดิม (เจ้าหลักที่วางแผนไว้) → ใช้ **ผู้ให้บริการ AI หลัก (มี free tier)** เป็นตัวเรียกหลัก + **ผู้ให้บริการ AI สำรอง** เป็น fallback เพื่อคุมค่าใช้จ่าย |
 
-> ตัวเลือก A (OTP) และ C (LINE Login OAuth) **ถูกตัดออกจากแผนแล้ว** — เก็บเป็น future work เท่านั้น
-
----
-
-## 1. สภาพปัจจุบัน (ยืนยันจากโค้ดจริง)
-
-| จุด | ไฟล์/บรรทัด | สภาพ |
-|-----|------------|------|
-| `LineUser` มี `user_id` (FK→User) + `linked_at` | `backend/models.py:160` | โครงพร้อม link แล้ว — **ไม่ต้องเพิ่ม model ใหม่** |
-| LINE auto-create user ใหม่เสมอ | `backend/line_bot.py:180` `_get_or_create_user()` | สร้าง `line_<id>@line.local` แยกทุกคน — ยังไม่เคย link เข้า web account |
-| Web login = upsert by email (ไม่มี password จริง) | `backend/app.py:137` | รับแค่ email+name → return user — **email มีอยู่แล้ว ใช้ผูกได้ตรงๆ** |
-| Web auth = React state ล้วน, refresh=logout | `frontend/src/auth.jsx` | ไม่มี token/session |
-| Budget เก็บที่ `Preference.category_budgets` (JSON) ผูก user_id | `backend/models.py:136` | มีแล้ว |
-| AI insight + ChatPanel เรียก `window.claude` | `frontend/src/views.jsx` | **บน production เงียบ** (window.claude undefined) — ต้องเปลี่ยนเป็น fetch endpoint จริง |
-| LINE แจ้งเตือนเกินงบ | `backend/line_bot.py` | **ยังไม่มี** — ไม่มี push budget alert |
-
-**ปัญหาแกนกลาง**: LINE user กับ web user เป็นคนละ `user_id` เสมอ → txs/budget แยกกัน 100%
-LINE Bot ไม่รู้ว่า follower คนนี้ = account ไหนบนเว็บ → แจ้งเตือนงบข้ามแพลตฟอร์มไม่ได้
+> ตัวเลือก OTP และ LINE Login OAuth ถูกตัดออกแล้ว — เก็บเป็น future work
 
 ---
 
-## 2. Flow การ link ที่เลือก — Email-based (ตัวเลือก B)
+## 2. การตัดสินใจสำคัญระหว่างทาง (Decisions Log)
 
-```
-[LINE] ผู้ใช้พิมพ์ "เชื่อม you@email.com"  (หรือ "link you@email.com")
-   → webhook จับ pattern email
-   → หา User ที่มี email นั้น (User.email — unique อยู่แล้ว)
-       ├─ ไม่เจอ → ตอบ "ไม่พบบัญชีนี้ กรุณา login เว็บด้วย email นี้ก่อน"
-       └─ เจอ → set LineUser.user_id = user.id + linked_at = now
-                 → ย้าย txs/imports/notifications เดิมของ LINE user ไปรวมที่ user เว็บ
-                 → ตอบ "เชื่อมกับ <email> สำเร็จ ✅"
-
-[ผลลัพธ์] ทั้งเว็บและ LINE อ่าน/เขียน user_id เดียวกัน
-   → budget ที่ตั้งบนเว็บ → LINE เห็น → แจ้งเตือนเกินงบได้
-```
-
-**เคส txs เดิมบน LINE**: ก่อน link ผู้ใช้อาจส่ง PDF ทาง LINE ไปแล้ว (อยู่ใต้ fake-email user)
-→ ตอน link ให้ **ย้าย** (UPDATE `user_id` ใน transactions/imports/notifications) ไป user เว็บ เพื่อข้อมูลไม่หาย — AJ กำหนดกฎ + ทดสอบเคสมี txs เดิม
-
-**ไม่ต้องมีตารางใหม่ / ไม่ต้อง migration** — ใช้ `LineUser.user_id` + `User.email` ที่มีอยู่แล้ว
+| # | ประเด็น | ตัดสินเป็น | เหตุผล |
+|---|---------|-----------|--------|
+| D1 | AI provider | ใช้ผู้ให้บริการหลักที่มี free tier + ผู้ให้บริการสำรองเป็น fallback | คุมต้นทุน sprint demo + กันล่ม ถ้าตัวหลักโดน rate limit / โควต้าหมด ก็ยังตอบได้ |
+| D2 | Conservative principle ใน parser | ถ้า merchant ไม่ match keyword ใด ๆ → คืน `other` (ไม่เดา) | กันการจัดหมวดผิดที่ทำให้ insight เพี้ยน — ดีกว่าทายผิดแล้ว user เข้าใจผิด |
+| D3 | Re-link safety | ย้ายข้อมูลเฉพาะกรณี LineUser เคยเป็น auto-user (line_xxx@line.local) เท่านั้น | กันเคส user link ซ้ำหลายครั้ง / สลับบัญชี → ข้อมูลของบัญชีเว็บเดิมไม่โดนเขียนทับ |
+| D4 | Dedup statement | เช็คซ้ำตอน insert txs (ไม่ใช่ตอน parse) | parse PDF เร็ว / dedup อยู่ใกล้ DB จริง — กันอัปโหลดไฟล์เดิมซ้ำ |
+| D5 | Budget alert trigger point | trigger 2 จุด: หลัง insert txs **และ** หลัง link สำเร็จ | ตอน link ใหม่ ๆ ข้อมูลพึ่งโผล่มา ต้องเช็คงบทันทีไม่งั้น user ต้องอัปโหลดใหม่ถึงเด้ง |
+| D6 | LINE cold-start | ใช้ push_message เป็น fallback ถ้า reply token หมดอายุ | Render Free cold-start ~30s ทำให้ reply ทันบ้างไม่ทันบ้าง — fallback กันเงียบ |
 
 ---
 
-## 3. Mitigation ความปลอดภัยของ email linking (เบาๆ ตามที่ user รับ tradeoff)
+## 3. สิ่งที่ทำจริง — ตามแผนเดิม (P0)
 
-> user ยอมรับว่า "ใครรู้ email ก็ผูกได้" เพราะเป็น demo sprint — แต่ PM แนะนำใส่กันชนเบาๆ ดังนี้
+### 3.1 Email account linking (LINE ↔ webapp)
+- LINE OA จับ pattern `เชื่อม <email>` / `link <email>` → หา User ตาม email → set `LineUser.user_id` + `linked_at` → ตอบยืนยัน
+- **Guard**: ผูกได้เฉพาะ email ที่เคย login เว็บแล้ว (มี User row จริง) — ไม่เจอ → ตอบ error ชัด
+- **ย้ายข้อมูล**: ย้าย transactions/imports/notifications จาก auto-user (line_xxx@line.local) ไปรวมกับ user เว็บ
+- **Re-link safety (เกินแผน)**: ถ้า LineUser คนนี้เคยถูก link มาก่อน + บัญชีเดิมไม่ใช่ auto-user → **ไม่ย้ายข้อมูล** เพื่อกันข้อมูลของบัญชีเว็บเดิมโดนเขียนทับ
+- ใช้ `LineUser.user_id` + `User.email` ที่มีอยู่แล้ว — **ไม่ต้อง migration**
 
-| มาตรการ | ระดับ | ทำไหม |
-|---------|-------|-------|
-| **ผูกได้เฉพาะ email ที่เคย login เว็บแล้ว** (มี User row จริง) — ถ้าไม่เคย login → ปฏิเสธ | P0 (แนะนำทำ) | ได้ฟรี เพราะ flow หา User by email อยู่แล้ว — ไม่เพิ่มงาน |
-| **Confirm message ก่อนผูก** — bot ถาม "ยืนยันผูกกับ <email>? พิมพ์ ใช่" ก่อนเชื่อมจริง | P1 (stretch) | กัน fat-finger / พิมพ์ผิด เพิ่ม state นิดหน่อย |
-| หมายเหตุในเดโม่อาจารย์: "เป็น demo linking — production จริงควรใช้ LINE Login OAuth" | เอกสาร | NOTE/PM ใส่ใน README ตอนส่ง |
+### 3.2 AI endpoint จริง (production)
+- เพิ่ม `POST /api/ai/complete` (รวม insight + chat ใน endpoint เดียว) เรียก provider จริง
+- **Multi-provider architecture**:
+  - **Primary**: ผู้ให้บริการ AI หลัก (มี free tier — เลือกเพราะคุมค่าใช้จ่ายได้)
+  - **Fallback**: ผู้ให้บริการ AI สำรอง (เผื่อ primary ล่ม/โควต้าหมด)
+  - Logic: ลอง primary ก่อน → ถ้า error ตกชั้นไป fallback อัตโนมัติ
+- Frontend (`views.jsx`) เปลี่ยนจาก `window.claude.complete()` → `fetch('/api/ai/complete')` ทั้ง Insights + ChatPanel
+- error handling: ถ้า key หาย/provider ล่มทั้งคู่ → ตอบ message ชัดเจน (ไม่เงียบเหมือนเดิม)
 
-**ความเสี่ยงที่ยอมรับ**: ไม่มี verify เจ้าของ email จริง → ผู้ไม่หวังดีที่รู้ email + login เว็บแทนได้ จะผูก LINE ตัวเองเข้าบัญชีเหยื่อได้ ยอมรับในบริบท sprint demo
-
----
-
-## 4. แตกงาน (ใครทำอะไร + ขึ้นกับใคร)
-
-### AJ (Backend) — งานหลักของ sprint นี้
-| # | งาน | ไฟล์ | ขึ้นกับ |
-|---|-----|------|--------|
-| A1 | webhook: จับ pattern "เชื่อม/link <email>" → หา User by email → set `LineUser.user_id` + `linked_at` + ย้าย txs/imports/notifications เดิม → ตอบยืนยัน | `line_bot.py` | — |
-| A2 | guard: ผูกได้เฉพาะ email ที่มี User row (เคย login เว็บ) — ไม่เจอ → ตอบ error ชัด (P0 mitigation) | `line_bot.py` | A1 |
-| A3 | คำสั่ง LINE "งบ"/"budget" → อ่าน `Preference.category_budgets` แสดงสถานะใช้/งบ | `line_bot.py` | A1 |
-| A4 | **Budget alert**: เมื่อ insert txs (ทั้ง web `/api/transactions` และ LINE PDF) เช็คหมวดเกินงบ → push LINE (`push_message` + line_user_id ของ user) | `app.py`, `line_bot.py` | A1 |
-| A5 | **AI endpoint**: `POST /api/ai/insight` + `POST /api/ai/chat` เรียก Anthropic API (`ANTHROPIC_API_KEY` จาก env) รับ txs/คำถาม → คืนผล insight/คำตอบ | `app.py` | — (ขนานกับ A1 ได้) |
-| A6 | เพิ่ม `anthropic` ลง `requirements.txt` + เตือน user ตั้ง `ANTHROPIC_API_KEY` บน Render | `requirements.txt` | A5 (เดี๋ยว AJ แก้ไฟล์เอง) |
-| A7 | (P1) confirm step ก่อนผูก email | `line_bot.py` | A1 |
-
-### ACHI (Frontend)
-| # | งาน | ไฟล์ | ขึ้นกับ |
-|---|-----|------|--------|
-| F1 | แก้ Insights ให้ `fetch('/api/ai/insight')` แทน `window.claude.complete()` | `frontend/src/views.jsx` | A5 (ตกลง contract ก่อน) |
-| F2 | แก้ ChatPanel ("คุยกับ Mind") ให้ `fetch('/api/ai/chat')` แทน `window.claude` | `views.jsx` | A5 |
-| F3 | loading/error state ของปุ่ม AI (กันเงียบเหมือนเดิม — โชว์ spinner + error toast) | `views.jsx` | F1,F2 |
-| F4 | เพิ่มส่วน "เชื่อมต่อ LINE" ในหน้า settings/overview — บอกวิธีพิมพ์ "เชื่อม <email>" ใน LINE OA + ปุ่มเปิด LINE | `views.jsx` | A1 ( contract) |
-
-### BEST (UX/UI) — styling
-| # | งาน | ไฟล์ | ขึ้นกับ |
-|---|-----|------|--------|
-| B1 | สไตล์ card "เชื่อมต่อ LINE" + badge สถานะ + ปุ่มเปิด LINE OA | `ux_ui/styles.css` | F4 (โครง markup) |
-| B2 | สไตล์ loading/error ของปุ่ม AI (spinner, error toast) | `styles.css` | F3 |
-| B3 | responsive ของ card บน mobile | `styles.css` | B1 |
-
-### WA (Logic/AI) — เข้า critical path แล้ว (เพราะมี AI endpoint จริง)
-| # | งาน | หมายเหตุ |
-|---|-----|----------|
-| W1 | ช่วยออกแบบ **prompt** สำหรับ `/api/ai/insight` + `/api/ai/chat` — ป้อน context จาก txs/category ให้ Claude ตอบแม่น | ทำคู่กับ AJ ตอน A5 |
-| W2 | ให้ AJ ใช้ผล `categorize()` เดิมเป็น context ใน prompt (ไม่ต้องแก้ parser) | ใช้ของเดิม |
+### 3.3 Budget alert ผ่าน LINE
+- เมื่อ insert txs (ทั้ง web upload และ LINE PDF) → เช็คหมวดเกินงบ (Preference.category_budgets) → push LINE ไป line_user_id ของ user
+- คำสั่ง LINE "งบ"/"budget" → อ่าน Preference.category_budgets แสดงสถานะใช้/งบ
+- **Trigger เพิ่มหลัง link สำเร็จ (เกินแผน)**: เผื่อ user link หลังจากมี txs ค้างอยู่แล้ว — เด้งทันทีโดยไม่ต้องอัปโหลดใหม่
+- ใช้ push_message (fallback ปลอดภัยจาก reply token expire)
 
 ---
 
-## 5. Timeline 4 วัน (รวม 3 scope: email linking + AI endpoint + budget alert)
+## 4. งานเสริม "เกินแผนเดิม" (Day 4–5 Additions)
 
-> 4 วันค่อนข้างแน่น — PM จัด P0 (ต้องมีเพื่อปิด Sprint Goal) vs Stretch ชัดเจน
+> ตอนวางแผน Day 1 ยังไม่มีรายการพวกนี้ — ผุดมาระหว่าง implement เพราะเจอ edge case หรือ issue จริงตอนเทสบน production
 
-| วัน | โฟกัส | ใคร | Deliverable |
-|-----|-------|-----|-------------|
-| **Day 1** | email linking webhook + ตกลง contract AI endpoint | AJ (A1,A2) ∥ AJ+WA เริ่ม A5/prompt | LINE พิมพ์ "เชื่อม email" → user_id ตรงกัน + ย้าย txs สำเร็จ (ทดสอบ local) |
-| **Day 2** | AI endpoint ทำงานจริง + frontend fetch | AJ (A5,A6) + WA (W1) ∥ ACHI (F1,F2) | `/api/ai/insight` + `/api/ai/chat` คืนผลจริง, ปุ่ม AI บนเว็บเรียก endpoint ได้ |
-| **Day 3** | budget alert + คำสั่งงบ LINE + UI/loading + styling | AJ (A3,A4) ∥ ACHI (F3,F4) ∥ BEST (B1,B2,B3) | LINE แจ้งเตือนเกินงบจริง + card เชื่อม LINE + ปุ่ม AI มี loading/error |
-| **Day 4** | ทดสอบรวม + แก้บั๊ก + เดโม่ + buffer + (stretch A7/confirm) | ทุกคน | flow ครบ: login→เชื่อม LINE→อัปโหลด→เกินงบ→LINE เด้ง + AI insight ทำงานบน production |
+| # | งาน | เหตุผลที่ต้องทำ |
+|---|-----|----------------|
+| E1 | **Fix LINE bot ไม่ตอบบน production** — push fallback + ลด latency cold-start | Render Free sleep ทำให้ reply token หมดอายุ → bot เงียบ บั๊กนี้บล็อก budget alert ทั้งระบบ |
+| E2 | **Statement dedup** — กันอัปโหลดไฟล์เดิมซ้ำ + Undo last import | ตอนเทสจริง user อัปไฟล์เดิมโดยไม่ตั้งใจ → txs ซ้ำ → insight เพี้ยน |
+| E3 | **Reset Statement** — ปุ่มล้างข้อมูลเริ่มใหม่ (txs + imports + notifications) | user เทสไปเทสมาข้อมูลเละ ต้องมีปุ่มรีเซ็ตเริ่มใหม่ได้ |
+| E4 | **Categorization improvement ทั้ง 4 ธนาคาร** | จัดหมวดผิดในหลายเคส — ขยาย keyword + เปลี่ยน rule order + strip prefix noise |
+| E4.1 | KBank — strip prefix `Ref` ก่อนจัดหมวด + ขยาย keyword หมวด food/groceries (ไทย) | merchant ที่ขึ้นต้นด้วย ref code ถูก match กับหมวดผิด |
+| E4.2 | KTB + GSB — preserve "merchant extra info" ก่อนส่งเข้า `categorize()` | parser เดิม trim ทิ้งทำให้ context หายไป |
+| E4.3 | SCB — ปรับ merchant extraction (6 pattern) + scrub bank markers | SCB statement มี layout หลากหลายกว่าธนาคารอื่น |
+| E4.4 | Refactor `categorize()` — ordered rules + ขยายเป็น 7 หมวด | rule order เดิมทำให้ keyword ที่กว้างชนะ keyword ที่เฉพาะ |
+| E5 | **PII protection sweep** — ตรวจสอบ + ล้างข้อมูลในโค้ดให้ปลอดภัยก่อนเปลี่ยน repo เป็น public | จะส่งอาจารย์ ต้องมั่นใจไม่มี email/token/PII หลุดใน commit history |
+| E6 | **Multi-provider AI fallback** (ขยายจาก D1) | เพิ่ม resilience — ถ้า primary โดน rate limit → ตกไป fallback อัตโนมัติ ไม่มีดาวน์ไทม์ฝั่ง user |
 
-### P0 vs Stretch
-| ระดับ | งาน |
-|-------|-----|
-| **P0 (ต้องมี)** | A1 email linking, A2 guard, A5 AI endpoint, F1/F2 frontend fetch, A4 budget alert, F4 UI เชื่อม LINE |
-| **Stretch (ถ้าเหลือเวลา)** | A3 คำสั่ง "งบ" ใน LINE, A7 confirm step, F3 loading polish, B-styling ระดับสวยงาม |
-
-**ถ้า 4 วันแน่นเกิน** → ตัด Stretch ก่อน (A3/A7/F3) แล้วโฟกัส P0 ให้ flow หลักครบ. เดโม่ Sprint Goal ผ่านได้ด้วย P0 ล้วน
-
-**Note ลำดับ**:
-- A1 (linking) ต้องเสร็จก่อน A4 (alert) เพราะ alert ต้องรู้ line_user_id ที่ผูกกับ user
-- A5 (AI endpoint) ขนานกับ A1 ได้ (คนละไฟล์/feature) — แต่ต้องตกลง contract API กับ ACHI ตั้งแต่ Day 1 ให้ F1/F2 ทำขนานได้
+**สรุปขอบเขตที่เกินแผน**: 6 หัวข้อใหญ่ (E1–E6) เกินจาก scope เริ่มต้น 3 ฟีเจอร์ — รวม Sprint 3 ส่งงาน **9 หัวข้อใหญ่** (3 ตามแผน + 6 เพิ่ม)
 
 ---
 
-## 6. ความเสี่ยง / Dependency
+## 5. สรุปการเปลี่ยนแปลงเชิงสถาปัตยกรรม
 
-| ความเสี่ยง | ผลกระทบ | การรับมือ |
-|-----------|---------|-----------|
-| **`ANTHROPIC_API_KEY` ต้องตั้งบน Render** + user ต้องมี key จริง | ถ้าไม่มี key → `/api/ai/*` พัง 500 → ปุ่มยังเงียบเหมือนเดิม | **user ต้องเตรียม Anthropic API key + ตั้ง env บน Render Dashboard.** AJ ทำ error handling ให้ endpoint ตอบ message ชัดถ้า key หาย (ไม่เงียบ) |
-| **Anthropic API มีค่าใช้จ่าย** ต่อ request | บิลพุ่งถ้าโดน spam | จำกัด context/tokens ใน prompt + (stretch) rate limit เบาๆ — WA/AJ คุมขนาด prompt |
-| **Email linking ไม่ปลอดภัย** (ไม่ verify เจ้าของ email) | ใครรู้ email + login แทนได้ → ผูก LINE เข้าบัญชีเหยื่อ | user รับ tradeoff แล้ว. ใส่ P0 mitigation (A2: ต้องเคย login เว็บก่อน) + หมายเหตุในเดโม่ + (P1) confirm step |
-| **Migration บน Postgres** | — | **ไม่ต้อง migration ใหม่** — ใช้ `LineUser.user_id` + `User.email` ที่มีอยู่แล้ว ✅ (ยืนยันแล้ว ตัด LinkCode ออก) |
-| **Render Free cold-start ~30s** → reply token หมดอายุ | LINE ตอบช้า/พลาด token | โค้ดเดิมมี fallback `push_message` (line_bot.py:78) — budget alert ใช้ push อยู่แล้ว ปลอดภัย |
-| **Push message ต้องมี line_user_id** | user ยังไม่ link → alert ส่งไม่ได้ | ออกแบบให้ alert ทำงานเฉพาะ user ที่ link แล้ว (มี LineUser row) — ถูกต้องตาม flow |
-| txs เดิมบน LINE ก่อน link | อาจซ้ำ/หาย ตอนย้าย | A1 กำหนดกฎย้ายชัด (UPDATE user_id) + ทดสอบเคสมี txs เดิม |
+| จุด | ก่อน Sprint 3 | หลัง Sprint 3 |
+|-----|-------------|--------------|
+| LINE user ↔ web user | คนละ `user_id` เสมอ (auto-create line_xxx@line.local) | link ผ่าน email → user_id เดียวกัน ใช้ budget/txs ร่วมกัน |
+| AI Insight + Chat | เรียก `window.claude` (เงียบบน production) | fetch `/api/ai/complete` (provider จริง + fallback) |
+| Budget alert | ไม่มี | push LINE ทันทีตอน txs เกินงบ + ตอน link สำเร็จ |
+| Statement upload | อัปซ้ำได้ ไม่มี undo | dedup + undo last import + reset statement |
+| Parser ความแม่นยำหมวด | จัดผิดบ่อย ในหลายธนาคาร | 7 หมวด ordered rules + ปรับ parser 4 ธนาคารแยกเคส |
+| AI provider strategy | ผูกกับ provider เดียว | multi-provider พร้อม fallback |
+
+---
+
+## 6. ความเสี่ยง / ข้อจำกัดที่เหลือ (ตอนปิด Sprint)
+
+| รายการ | สถานะ | หมายเหตุ |
+|--------|------|---------|
+| Email linking ไม่ verify เจ้าของ email | ยอมรับ tradeoff ใน demo | production จริงควรใช้ LINE Login OAuth — เป็น future work |
+| Render Free cold-start ~30s | ลด impact ด้วย push fallback | ถ้าจะให้ smooth ขึ้นต้อง upgrade plan / warmer |
+| AI provider key dependency | ตั้ง env บน Render dashboard | ถ้า key ทั้งสองเจ้าหาย → ปุ่ม AI ตอบ error ชัด (ไม่เงียบเหมือนก่อน Sprint 3) |
+| DB เป็น Render Free Postgres | หมดอายุ ~27 มิ.ย. 2026 | user วางแผนย้าย Supabase — แค่เปลี่ยน DATABASE_URL ไม่ต้องแก้ code |
 
 ---
 
 ## 7. สรุป (ทำไปแล้ว / เหลืออะไร / ใครค้าง)
 
-- **ทำไปแล้ว (โครงที่ใช้ต่อได้)**: `LineUser.user_id`+`linked_at` + `User.email` (unique) มีในโมเดล — **ไม่ต้องเพิ่ม model/migration**, budget เก็บใน Preference, LINE webhook + push fallback พร้อม
-- **เหลือ (sprint นี้)**:
-  - AJ: email linking webhook (A1,A2), AI endpoint (A5,A6), budget alert (A4), คำสั่งงบ LINE (A3)
-  - ACHI: frontend fetch AI endpoint (F1,F2,F3), UI เชื่อม LINE (F4)
-  - WA: prompt design สำหรับ AI endpoint (W1,W2) — **เข้า critical path แล้ว**
-  - BEST: styling card LINE + ปุ่ม AI loading (B1,B2,B3)
-- **ค้างรอ user**: เตรียม **Anthropic API key** + ตั้ง `ANTHROPIC_API_KEY` บน Render (บล็อก A5 ตอน deploy)
-- **ตัดออกจากแผนแล้ว**: LinkCode model, OTP flow, LINE Login OAuth
+- **ทำแล้ว (P0 ตามแผน)**: email linking + AI endpoint + budget alert + UI เชื่อม LINE + loading/error — ครบ deploy บน production
+- **ทำเพิ่มเกินแผน**: 6 หัวข้อ (LINE bot fix, dedup, undo, reset, parser improvement 4 ธนาคาร, PII sweep, multi-provider fallback)
+- **เหลือเป็น future work** (ไม่ได้ block Sprint Goal):
+  - LINE Login OAuth (แทน email-based linking)
+  - Google OAuth จริง (ตอนนี้เป็น email upsert ล้วน)
+  - ย้าย DB ไป Supabase (รอ user เลือก)
+  - เปลี่ยน repo เป็น public ส่งอาจารย์
+- **ค้างรอ user**: ไม่มี — Sprint 3 ปิดได้
 
 ---
 
 ## Next step ที่แนะนำ
 
-**งานแรก Day 1 = AJ เริ่มที่ A1 (email linking webhook)** — จับ pattern "เชื่อม <email>" → หา User → set `LineUser.user_id` + ย้าย txs เดิม. ขนานกันให้ **AJ + WA ตกลง contract ของ `/api/ai/*` (A5/W1)** เพื่อให้ ACHI ทำ F1/F2 ต่อได้ทันที Day 2.
-
-**ก่อนเริ่ม**: เตือน user เตรียม **Anthropic API key** ให้พร้อม (ต้องใช้ตอน A5 deploy บน Render).
+Sprint 3 ปิดสมบูรณ์แล้ว ไม่มี action ค้าง. ขั้นถัดไปขึ้นกับ user เลือก:
+1. ส่งงานอาจารย์ (เปลี่ยน repo เป็น public + เตรียม slide เดโม่)
+2. เริ่มวางแผน Sprint 4 (Supabase migration / OAuth จริง / improve AI prompt)
