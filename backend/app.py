@@ -533,7 +533,12 @@ def api_set_prefs(user_id: int):
 #   3) Neither set / both fail → return {"text": ""} so the frontend's
 #      null-fallback path renders cleanly instead of throwing.
 
-_GEMINI_MODEL = "gemini-2.0-flash"
+# NOTE: ใช้ gemini-1.5-flash แทน gemini-2.0-flash เพราะ free tier daily quota
+# เยอะกว่ามาก (1,500 RPD + 15 RPM สำหรับ 1.5-flash vs โควต้าน้อยกว่ามากของ
+# 2.0-flash) — production เคยเจอ 429 RESOURCE_EXHAUSTED รัวๆ จาก quota
+# `GenerateRequestsPerDayPerProjectPerModel-FreeTier`. คุณภาพ 1.5-flash ยังดี
+# พอสำหรับ chat + insight generation ของแอป.
+_GEMINI_MODEL = "gemini-1.5-flash"
 _ANTHROPIC_MODEL = "claude-3-5-sonnet-latest"
 _AI_MAX_TOKENS = 1024
 _AI_MAX_PROMPT_CHARS = 12000  # guard against runaway / abusive prompts
@@ -542,8 +547,13 @@ _AI_MAX_PROMPT_CHARS = 12000  # guard against runaway / abusive prompts
 def _call_gemini(prompt: str) -> str:
     """Call Google Gemini and return the response text.
 
-    Raises on any failure (missing SDK, auth error, network) so the route
-    handler can fall back to the next provider in the chain.
+    Raises on any failure (missing SDK, auth error, network, quota) so the
+    route handler can fall back to the next provider in the chain.
+
+    Quota note: free tier daily quota can be exhausted (429
+    RESOURCE_EXHAUSTED). We detect that specific case and log a clear
+    warning so ops can distinguish "quota issue" from generic errors —
+    behaviour is unchanged (re-raise → fallback to Anthropic).
     """
     import google.generativeai as genai  # lazy import — never crash startup
 
@@ -553,10 +563,31 @@ def _call_gemini(prompt: str) -> str:
 
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel(_GEMINI_MODEL)
-    resp = model.generate_content(
-        prompt,
-        generation_config={"max_output_tokens": _AI_MAX_TOKENS},
-    )
+    try:
+        resp = model.generate_content(
+            prompt,
+            generation_config={"max_output_tokens": _AI_MAX_TOKENS},
+        )
+    except Exception as exc:
+        # Detect quota exhaustion specifically to give ops a clear signal.
+        # google-generativeai surfaces this as ResourceExhausted / 429 with
+        # the string "quota" / "RESOURCE_EXHAUSTED" in the message.
+        msg = str(exc)
+        lowered = msg.lower()
+        if (
+            "resource_exhausted" in lowered
+            or "quota" in lowered
+            or "429" in msg
+        ):
+            log.warning(
+                "Gemini quota exceeded for model=%s (free tier daily limit "
+                "likely hit) — falling back to next provider. detail=%s",
+                _GEMINI_MODEL,
+                msg,
+            )
+        # Re-raise so the route handler's provider chain falls back as usual.
+        raise
+
     # `resp.text` concatenates all text parts; guard for empty/blocked responses.
     text = (getattr(resp, "text", "") or "").strip()
     return text
