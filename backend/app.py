@@ -518,7 +518,7 @@ def api_set_prefs(user_id: int):
         db.close()
 
 
-# ─── AI (Anthropic) ──────────────────────────────────────────────────────────
+# ─── AI (Gemini default, Anthropic fallback) ─────────────────────────────────
 
 # Locked API contract (do NOT change — ACHI's frontend depends on it):
 #   POST /api/ai/complete   body {"prompt": "<string>"}  →  {"text": "<string>"}
@@ -526,10 +526,64 @@ def api_set_prefs(user_id: int):
 # Used by the web "AI Insights" (derived → real) and the "คุยกับ Mind" chat
 # panel, replacing the old window.claude.complete() that only existed inside
 # the Claude.ai artifact sandbox (undefined on Render → silent failures).
+#
+# Provider priority:
+#   1) GEMINI_API_KEY set    → try Gemini first (free tier — preferred)
+#   2) ANTHROPIC_API_KEY set → fall back to Anthropic (paid)
+#   3) Neither set / both fail → return {"text": ""} so the frontend's
+#      null-fallback path renders cleanly instead of throwing.
 
-_AI_MODEL = "claude-3-5-sonnet-latest"
+_GEMINI_MODEL = "gemini-2.0-flash"
+_ANTHROPIC_MODEL = "claude-3-5-sonnet-latest"
 _AI_MAX_TOKENS = 1024
 _AI_MAX_PROMPT_CHARS = 12000  # guard against runaway / abusive prompts
+
+
+def _call_gemini(prompt: str) -> str:
+    """Call Google Gemini and return the response text.
+
+    Raises on any failure (missing SDK, auth error, network) so the route
+    handler can fall back to the next provider in the chain.
+    """
+    import google.generativeai as genai  # lazy import — never crash startup
+
+    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY not set")
+
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel(_GEMINI_MODEL)
+    resp = model.generate_content(
+        prompt,
+        generation_config={"max_output_tokens": _AI_MAX_TOKENS},
+    )
+    # `resp.text` concatenates all text parts; guard for empty/blocked responses.
+    text = (getattr(resp, "text", "") or "").strip()
+    return text
+
+
+def _call_anthropic(prompt: str) -> str:
+    """Call Anthropic Claude and return the response text.
+
+    Raises on any failure so the route handler can fall back.
+    """
+    import anthropic  # lazy import — never crash startup
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY not set")
+
+    client = anthropic.Anthropic(api_key=api_key)
+    resp = client.messages.create(
+        model=_ANTHROPIC_MODEL,
+        max_tokens=_AI_MAX_TOKENS,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    # resp.content is a list of content blocks; concatenate text blocks.
+    text = "".join(
+        getattr(block, "text", "") for block in (resp.content or [])
+    ).strip()
+    return text
 
 
 @app.route("/api/ai/complete", methods=["POST"])
@@ -543,37 +597,50 @@ def api_ai_complete():
         return jsonify({"text": ""})
 
     # Clamp overly long prompts instead of rejecting — keeps the UX working
-    # while capping token cost on the Anthropic bill.
+    # while capping token cost on the provider bill.
     if len(prompt) > _AI_MAX_PROMPT_CHARS:
         prompt = prompt[:_AI_MAX_PROMPT_CHARS]
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    if not api_key:
-        log.warning("ANTHROPIC_API_KEY not set — /api/ai/complete returning empty text")
-        return jsonify({"text": ""})
+    has_gemini = bool(os.environ.get("GEMINI_API_KEY", "").strip())
+    has_anthropic = bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
 
-    try:
-        import anthropic  # lazy import so a missing lib never crashes startup
-    except ImportError:
-        log.error("anthropic package not installed — run pip install -r requirements.txt")
-        return jsonify({"text": ""})
+    # Build the ordered provider chain. Gemini first (free tier preferred),
+    # Anthropic as fallback. Skipping providers whose key is missing avoids
+    # a guaranteed-fail attempt + a noisy stack trace in the logs.
+    providers: list[tuple[str, callable]] = []
+    if has_gemini:
+        providers.append(("gemini", _call_gemini))
+    if has_anthropic:
+        providers.append(("anthropic", _call_anthropic))
 
-    try:
-        client = anthropic.Anthropic(api_key=api_key)
-        resp = client.messages.create(
-            model=_AI_MODEL,
-            max_tokens=_AI_MAX_TOKENS,
-            messages=[{"role": "user", "content": prompt}],
+    if not providers:
+        log.warning(
+            "/api/ai/complete: no AI provider key set "
+            "(GEMINI_API_KEY / ANTHROPIC_API_KEY) — returning empty text"
         )
-        # resp.content is a list of content blocks; concatenate text blocks.
-        text = "".join(
-            getattr(block, "text", "") for block in (resp.content or [])
-        ).strip()
-        return jsonify({"text": text})
-    except Exception as exc:
-        log.exception("Anthropic API call failed")
-        # 502 + empty text: frontend already falls back to null / apology.
-        return jsonify({"text": "", "error": str(exc)}), 502
+        return jsonify({"text": ""})
+
+    last_error: str | None = None
+    for name, fn in providers:
+        log.info("/api/ai/complete: trying provider=%s", name)
+        try:
+            text = fn(prompt)
+            log.info("/api/ai/complete: provider=%s succeeded (%d chars)", name, len(text))
+            return jsonify({"text": text})
+        except ImportError as exc:
+            last_error = f"{name}: SDK not installed ({exc})"
+            log.error(
+                "/api/ai/complete: provider=%s SDK missing — run pip install -r requirements.txt",
+                name,
+            )
+        except Exception as exc:
+            last_error = f"{name}: {exc}"
+            log.warning("/api/ai/complete: provider=%s failed: %s", name, exc)
+
+    # All providers exhausted. 502 + empty text so the frontend's null-fallback
+    # path still renders cleanly (no crash) but ops can see the error in DevTools.
+    log.error("/api/ai/complete: all providers failed; last_error=%s", last_error)
+    return jsonify({"text": "", "error": last_error or "all providers failed"}), 502
 
 
 # ─── LINE Webhook ────────────────────────────────────────────────────────────
