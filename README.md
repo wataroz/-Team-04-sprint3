@@ -28,7 +28,7 @@
 | Name | Role | What I did today | Evidence Link/File | Status |
 |---|---|---|---|---|
 | Peerawas | Backend | Setup repo | READ.md | Done:Setup repo / Doing:database schema / Blocked:- |
-|  |  |  |  | Done / Doing / Blocked |
+| Chisanupong | Frontend | Create react spa serve | branches:feature/flask-react/frontend/src/app.jsx, views.jsx, data.js, auth.jsx | Done:react spa serve / Doing:Dashboard Chart.js screenshot final + data flow test / Blocked:- |
 |  |  |  |  |  |
 |  |  |  |  |  |
 
@@ -37,7 +37,7 @@
 | Name | Role | What I did today | Evidence Link/File | Status |
 |---|---|---|---|---|
 | Peerawas | Backend | database schema | branches:feature/flask-react/backend/db.py | Done:database schema / Doing:database schema / Blocked:- |
-|  |  |  |  | Done / Doing / Blocked |
+| Chisanupong | Frontend | เชื่อมต่อ React Dashboard กับ Flask API และทดสอบการแสดงผลข้อมูลผ่าน Chart.js | Screenshot Dashboard และ GitHub commit บน branch feature/flask-react | Done:Form → API → Database → Dashboard ทำงานได้ / Doing:เก็บ Screenshot การ Integration และปรับ UI สำหรับ Demo / Blocked:- |
 |  |  |  |  |  |
 |  |  |  |  |  |
 
@@ -46,6 +46,6 @@
 | Name | Role | What I did today | Evidence Link/File | Status |
 |---|---|---|---|---|
 | Peerawas | Backend | bot line | branches:feature/flask-react/backend/line_bot.py | Done:line_bot.py / Doing:- / Blocked:- |
-|  |  |  |  | Done / Doing / Blocked |
+| Chisanupong | Frontend | ทดสอบระบบ Frontend แบบ End-to-End | Demo Website, Screenshot UI และ GitHub Repository | Done:Dashboard และ Frontend พร้อมสำหรับ Demo / Doing:- / Blocked:- |
 |  |  |  |  |  |
 |  |  |  |  |  |
