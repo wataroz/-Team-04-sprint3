@@ -29,7 +29,7 @@
 |---|---|---|---|---|
 | Peerawas | Backend | Setup repo | READ.md | Done:Setup repo / Doing:database schema / Blocked:- |
 | Chisanupong | Frontend | Create react spa serve | branches:feature/flask-react/frontend/src/app.jsx, views.jsx, data.js, auth.jsx | Done:react spa serve / Doing:Dashboard Chart.js screenshot final + data flow test / Blocked:- |
-|  |  |  |  |  |
+| Techit | UX/UI | จัดทำ Figma prototype link (หรือ HTML prototype ที่ใช้งานได้), screenshot ทุก flow, เตรียม demo script เบื้องต้น | ux_ui/src/ui.jsx, styles.css, tweaks-panel.jsx + design_pkg/moneymind/project/MoneyMind Prototype.html | branches:feature/flask-react/ux_ui |  
 | Peerapat | Logic-ai |  Implement parse_statement() + detect_bank() for KBank PDF  | branches:feature/flask-react/logic_ai/pdf_parser.py | | Done: KBank parser / Doing: GSB parser / Blocked:- |
 
 ## Day 3 Evidence Log
