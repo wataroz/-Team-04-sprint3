@@ -29,7 +29,7 @@
 |---|---|---|---|---|
 | Peerawas | Backend | Setup repo | READ.md | Done:Setup repo / Doing:database schema / Blocked:- |
 | Chisanupong | Frontend | Create react spa serve | branches:feature/flask-react/frontend/src/app.jsx, views.jsx, data.js, auth.jsx | Done:react spa serve / Doing:Dashboard Chart.js screenshot final + data flow test / Blocked:- |
-| Techit | UX/UI | จัดทำ Figma prototype link (หรือ HTML prototype ที่ใช้งานได้), screenshot ทุก flow, เตรียม demo script เบื้องต้น | ux_ui/src/ui.jsx, styles.css, tweaks-panel.jsx + design_pkg/moneymind/project/MoneyMind Prototype.html | branches:feature/flask-react/ux_ui |  
+| Techit | UX/UI | จัดทำ Figma prototype link (หรือ HTML prototype ที่ใช้งานได้), screenshot ทุก flow, เตรียม demo script เบื้องต้น | ux_ui/src/ui.jsx, styles.css, tweaks-panel.jsx + design_pkg/moneymind/project/MoneyMind Prototype.html | Done: ออกแบบ UI component (ui.jsx, styles.css, tweaks-panel.jsx) + สร้าง clickable prototype HTML พร้อม flow หลัก |  
 | Peerapat | Logic-ai |  Implement parse_statement() + detect_bank() for KBank PDF  | branches:feature/flask-react/logic_ai/pdf_parser.py | | Done: KBank parser / Doing: GSB parser / Blocked:- |
 
 ## Day 3 Evidence Log
@@ -38,7 +38,7 @@
 |---|---|---|---|---|
 | Peerawas | Backend | database schema | branches:feature/flask-react/backend/db.py | Done:database schema / Doing:database schema / Blocked:- |
 | Chisanupong | Frontend | เชื่อมต่อ React Dashboard กับ Flask API และทดสอบการแสดงผลข้อมูลผ่าน Chart.js | Screenshot Dashboard และ GitHub commit บน branch feature/flask-react | Done:Form → API → Database → Dashboard ทำงานได้ / Doing:เก็บ Screenshot การ Integration และปรับ UI สำหรับ Demo / Blocked:- |
-|  |  |  |  |  |
+| Techit | UX/UI | Presentation | Screenshot Prototype | branches:feature/flask-react/ux_ui |
 | Peerapat | Logic-ai | Add GSB, KTB, SCB bank parsers + categorize() with 8 categories (regex keyword matching) | branches:feature/flask-react/logic_ai/pdf_parser.py | Done: 4-bank parsers / Doing: category accuracy test / Blocked:- |
 
 ## Day 4 Evidence Log
