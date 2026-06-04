@@ -533,12 +533,12 @@ def api_set_prefs(user_id: int):
 #   3) Neither set / both fail → return {"text": ""} so the frontend's
 #      null-fallback path renders cleanly instead of throwing.
 
-# NOTE: ใช้ gemini-flash-latest alias เพื่อให้ Google ชี้ไป model ล่าสุด
-# อัตโนมัติ (กัน 404 จาก model deprecation) — เดิมใช้ gemini-1.5-flash แบบ
-# pinned แต่ Google ปลด model นั้นออกจาก v1beta endpoint แล้ว ทำให้เจอ
-# `404 models/gemini-1.5-flash is not found` บน production. ใช้ alias
-# จะตามอัปเดต model ล่าสุดที่รองรับ free tier ให้เอง ไม่ต้องไล่แก้โค้ด.
-_GEMINI_MODEL = "gemini-flash-latest"
+# NOTE: ใช้ gemini-2.0-flash เพราะคุณภาพคำตอบดีกว่า 1.5/latest (ภาษาไทย
+# คมขึ้น + reasoning ดีกว่า) — แต่ free tier daily quota ตึงกว่า. ถ้า
+# production เจอ 429 RESOURCE_EXHAUSTED เร็วเกินไป ให้สลับกลับเป็น
+# `gemini-flash-latest` หรือ `gemini-1.5-flash-002` (RPD 1,500). โค้ดมี
+# truncation telemetry + quota detection + fallback chain ครอบให้แล้ว.
+_GEMINI_MODEL = "gemini-2.0-flash"
 _ANTHROPIC_MODEL = "claude-3-5-sonnet-latest"
 _AI_MAX_TOKENS = 2048
 _AI_MAX_PROMPT_CHARS = 12000  # guard against runaway / abusive prompts
