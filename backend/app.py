@@ -540,7 +540,7 @@ def api_set_prefs(user_id: int):
 # จะตามอัปเดต model ล่าสุดที่รองรับ free tier ให้เอง ไม่ต้องไล่แก้โค้ด.
 _GEMINI_MODEL = "gemini-flash-latest"
 _ANTHROPIC_MODEL = "claude-3-5-sonnet-latest"
-_AI_MAX_TOKENS = 1024
+_AI_MAX_TOKENS = 2048
 _AI_MAX_PROMPT_CHARS = 12000  # guard against runaway / abusive prompts
 
 
@@ -590,6 +590,27 @@ def _call_gemini(prompt: str) -> str:
 
     # `resp.text` concatenates all text parts; guard for empty/blocked responses.
     text = (getattr(resp, "text", "") or "").strip()
+
+    # Detect MAX_TOKENS truncation so ops can spot when _AI_MAX_TOKENS is too
+    # small (Gemini cuts mid-sentence — user sees half a reply). We still
+    # return whatever text we got — a truncated answer is better than none.
+    # SDK shape varies between versions, so wrap in try/except to stay safe.
+    try:
+        candidates = getattr(resp, "candidates", None) or []
+        if candidates:
+            finish_reason = getattr(candidates[0], "finish_reason", None)
+            # finish_reason may be an enum (.name == "MAX_TOKENS"), a string,
+            # or an int (2 in some SDK builds). Normalise all three.
+            fr_name = getattr(finish_reason, "name", None) or str(finish_reason)
+            if fr_name == "MAX_TOKENS" or finish_reason == 2:
+                log.warning(
+                    "Gemini response truncated by max_tokens=%d — "
+                    "consider raising _AI_MAX_TOKENS",
+                    _AI_MAX_TOKENS,
+                )
+    except Exception:
+        pass  # never let telemetry crash the response path
+
     return text
 
 
