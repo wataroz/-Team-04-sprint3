@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import sys
 import webbrowser
 from threading import Timer
@@ -46,6 +47,7 @@ except ImportError:
 from backend.db import SessionLocal, init_db  # noqa: E402
 from backend.models import (  # noqa: E402
     Import,
+    MerchantOverride,
     Notification,
     Preference,
     Transaction,
@@ -183,6 +185,53 @@ def api_list_transactions():
         db.close()
 
 
+# ─── Learning Loop helpers (merchant→category overrides) ────────────────────
+
+_WS_RE = re.compile(r"\s+")
+
+
+def _normalize_merchant(m) -> str:
+    """Normalise a merchant string for override fingerprinting.
+
+    Lowercase + strip + collapse internal whitespace runs to a single space.
+    Returns ``""`` for empty / None input so callers can short-circuit
+    cheaply.  Mirrors the merchant side of ``_dedup_build_rows``'s
+    fingerprint (case-insensitive, whitespace-tolerant) so the same string
+    that dedups also matches a saved override.
+    """
+    if not m:
+        return ""
+    return _WS_RE.sub(" ", str(m).strip().lower())
+
+
+def _apply_overrides(db, user_id: int, txs: list[dict]) -> list[dict]:
+    """Re-categorise tx dicts whose merchant matches a saved override.
+
+    Mutates each tx dict in place (setting ``tx['category']``) and returns
+    the same list for chaining. Uses a single indexed query on
+    ``MerchantOverride.user_id`` — O(N + M) for N overrides + M txs, no N+1.
+
+    Called BEFORE dedup at every insert site so the categories that land
+    in the DB already reflect the user's learned preferences. Safe no-op
+    when the user has no overrides yet.
+    """
+    if not txs:
+        return txs
+    rows = (
+        db.query(MerchantOverride.merchant_norm, MerchantOverride.category)
+        .filter(MerchantOverride.user_id == user_id)
+        .all()
+    )
+    if not rows:
+        return txs
+    mapping = {norm: cat for norm, cat in rows}
+    for tx in txs:
+        norm = _normalize_merchant(tx.get("merchant"))
+        if norm and norm in mapping:
+            tx["category"] = mapping[norm]
+    return txs
+
+
 def _dedup_build_rows(db, user_id: int, txs: list[dict], import_id):
     """Build Transaction ORM rows from a payload, skipping duplicates.
 
@@ -255,6 +304,10 @@ def api_create_transactions():
 
     db = SessionLocal()
     try:
+        # Apply Learning Loop overrides BEFORE dedup so the categories the
+        # user has previously taught us land in the DB instead of whatever
+        # the PDF parser inferred. Mutates txs in place.
+        _apply_overrides(db, int(user_id), txs)
         rows, skipped = _dedup_build_rows(db, int(user_id), txs, import_id)
         if rows:
             db.bulk_save_objects(rows)
@@ -278,6 +331,71 @@ def api_create_transactions():
             log.exception("budget alert after web bulk insert failed")
 
     return jsonify({"created": created, "skipped": skipped})
+
+
+@app.route("/api/transactions/<int:tx_id>", methods=["PATCH"])
+def api_patch_transaction(tx_id: int):
+    """Re-categorise a single transaction (Learning Loop, Day 5).
+
+    Body: ``{"user_id": int, "category": str, "save_pattern": bool}``
+    Response: ``{"updated": 1, "override_saved": true|false}``
+
+    When ``save_pattern`` is true and the transaction has a non-empty
+    merchant, we upsert a ``MerchantOverride`` row so future imports of the
+    same merchant auto-apply this category. ``override_saved`` reflects
+    whether that upsert actually happened (false if save_pattern was off,
+    or if the merchant string was empty).
+
+    Errors:
+      400 — user_id or category missing
+      403 — tx.user_id != body user_id (ownership guard)
+      404 — tx not found
+    """
+    body = request.get_json(silent=True) or {}
+    user_id = body.get("user_id")
+    new_category = (body.get("category") or "").strip()
+    save_pattern = bool(body.get("save_pattern"))
+
+    if not user_id or not new_category:
+        return jsonify({"error": "user_id and category required"}), 400
+
+    db = SessionLocal()
+    try:
+        tx = db.query(Transaction).filter_by(id=tx_id).first()
+        if tx is None:
+            return jsonify({"error": "not found"}), 404
+        if tx.user_id != int(user_id):
+            return jsonify({"error": "forbidden"}), 403
+
+        tx.category = new_category
+
+        override_saved = False
+        if save_pattern:
+            merchant_norm = _normalize_merchant(tx.merchant)
+            if merchant_norm:
+                existing = (
+                    db.query(MerchantOverride)
+                    .filter_by(user_id=int(user_id), merchant_norm=merchant_norm)
+                    .first()
+                )
+                if existing:
+                    existing.category = new_category
+                else:
+                    db.add(MerchantOverride(
+                        user_id=int(user_id),
+                        merchant_norm=merchant_norm,
+                        category=new_category,
+                    ))
+                override_saved = True
+
+        db.commit()
+        return jsonify({"updated": 1, "override_saved": override_saved})
+    except Exception as exc:
+        db.rollback()
+        log.exception("patch transaction failed for tx_id=%s", tx_id)
+        return jsonify({"error": str(exc)}), 500
+    finally:
+        db.close()
 
 
 # ─── Imports (audit log of statement uploads) ───────────────────────────────

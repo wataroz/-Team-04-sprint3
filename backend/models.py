@@ -20,6 +20,7 @@ from sqlalchemy import (
     JSON,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -175,6 +176,41 @@ class LineUser(Base):
             "line_user_id": self.line_user_id,
             "user_id": self.user_id,
             "display_name": self.display_name,
+        }
+
+
+class MerchantOverride(Base):
+    """User-specific merchant→category override (Learning Loop, Day 5).
+
+    When the user manually re-categorises a transaction with
+    ``save_pattern=true``, we persist the (normalised) merchant→category
+    mapping here. Subsequent imports look up the merchant fingerprint and
+    apply the override automatically so the user never has to re-tag the
+    same merchant twice.
+
+    ``merchant_norm`` is the merchant string after lowercase + strip +
+    collapse-internal-whitespace — same fingerprint shape as the dedup
+    path in ``app._dedup_build_rows``.
+    """
+
+    __tablename__ = "merchant_overrides"
+    __table_args__ = (
+        UniqueConstraint("user_id", "merchant_norm", name="uq_user_merchant_norm"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    merchant_norm: Mapped[str] = mapped_column(String(500), nullable=False, index=True)
+    category: Mapped[str] = mapped_column(String(32), nullable=False, default="other")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "merchant_norm": self.merchant_norm,
+            "category": self.category,
+            "created_at": self.created_at.isoformat(),
         }
 
 

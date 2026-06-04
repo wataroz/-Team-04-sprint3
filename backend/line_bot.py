@@ -611,7 +611,7 @@ def _handle_pdf(reply_token: str, message_id: str, user: User,
 
         # Lazy import to avoid the circular: app.py imports line_bot for the
         # webhook route, so importing app at module load would break startup.
-        from backend.app import _dedup_build_rows
+        from backend.app import _apply_overrides, _dedup_build_rows
 
         created = 0
         skipped = 0
@@ -628,6 +628,9 @@ def _handle_pdf(reply_token: str, message_id: str, user: User,
             db.commit()
             db.refresh(imp)
 
+            # Learning Loop: apply saved merchant→category overrides BEFORE
+            # dedup so user-taught categories survive into the DB.
+            _apply_overrides(db, user.id, txs)
             rows, skipped = _dedup_build_rows(db, user.id, txs, imp.id)
             created = len(rows)
             if rows:
