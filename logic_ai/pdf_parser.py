@@ -14,10 +14,15 @@ Y coordinate then sorts by X, mirroring the JS implementation.
 from __future__ import annotations
 
 import io
+import logging
 import re
+import time
 from typing import Iterable
 
 import pdfplumber
+
+
+log = logging.getLogger(__name__)
 
 
 # ─── Text extraction ────────────────────────────────────────────────────────
@@ -26,12 +31,23 @@ def extract_pdf_text(file_bytes: bytes) -> str:
     """Extract text from PDF, line-grouped by Y coordinate (matches pdf.js layout)."""
     out: list[str] = []
     with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-        for page in pdf.pages:
+        # Guard: กัน worker timeout/OOM จาก PDF เล่มยักษ์
+        if len(pdf.pages) > 50:
+            raise ValueError("PDF เกิน 50 หน้า — กรุณาแยกไฟล์")
+        total_pages = len(pdf.pages)
+        for page_num, page in enumerate(pdf.pages, start=1):
+            log.info("extract page %d/%d start", page_num, total_pages)
+            t0 = time.perf_counter()
             words = page.extract_words(
                 x_tolerance=2,
                 y_tolerance=2,
                 keep_blank_chars=False,
                 use_text_flow=False,
+            )
+            duration = time.perf_counter() - t0
+            log.info(
+                "extract page %d done: %d words, %.2fs",
+                page_num, len(words), duration,
             )
             lines: dict[int, list[tuple[float, str]]] = {}
             for w in words:

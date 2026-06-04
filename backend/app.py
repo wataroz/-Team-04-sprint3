@@ -27,6 +27,7 @@ import logging
 import os
 import re
 import sys
+import time
 import webbrowser
 from threading import Timer
 
@@ -120,12 +121,26 @@ def api_parse_pdf():
     data = f.read()
     if not data:
         return jsonify({"error": "empty file"}), 400
+    # Explicit 10 MB guard — กัน worker timeout/OOM ก่อนเข้า pdfplumber
+    if len(data) > 10 * 1024 * 1024:
+        return jsonify({"error": "ไฟล์ใหญ่เกิน 10 MB"}), 413
 
+    log.info("parse-pdf start: size=%d bytes", len(data))
+    t0 = time.perf_counter()
     try:
         bank, txs = parse_statement(data)
+    except ValueError as exc:
+        # Validation guards (page-count, size, format) — แสดง message ภาษาไทยให้ user
+        log.warning("parse-pdf rejected: %s", exc)
+        return jsonify({"error": str(exc)}), 413
     except Exception as exc:
         log.exception("parse_statement failed")
         return jsonify({"error": f"parse failed: {exc}"}), 500
+    dt = time.perf_counter() - t0
+    log.info(
+        "parse-pdf done: bank=%s txs=%d duration=%.2fs",
+        bank, len(txs), dt,
+    )
 
     return jsonify({
         "bank": bank,
