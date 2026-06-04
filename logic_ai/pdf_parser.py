@@ -263,7 +263,12 @@ def categorize(merchant: str, _type: str, incoming: bool) -> str:
 
 _KBANK_LINE = re.compile(
     r"^(\d{2})-(\d{2})-(\d{2})\s+\d{2}:\d{2}\s+"
-    r"(รับโอนเงิน|โอนเงิน|ชำระเงิน|ถอนเงินสด|ค่าธรรมเนียม|ดอกเบี้ย|ฝากเงินสด|ฝาก|ถอน)\s+"
+    # Primary action token: Thai keywords or English channel/action words.
+    r"(รับโอนเงิน|โอนเงิน|ชำระเงิน|ถอนเงินสด|ค่าธรรมเนียม|ดอกเบี้ย|ฝากเงินสด|ฝาก|ถอน|"
+    r"Transfer|Payment|Withdrawal|Withdraw|Deposit|Interest|Fee|QR|Cash)"
+    # Optional secondary action token (English KBank uses 2-word actions like
+    # "Transfer Withdrawal" / "Transfer Deposit" / "QR Transfer" / "Cash Withdrawal").
+    r"(?:\s+(Withdrawal|Withdraw|Deposit|Transfer|Payment))?\s+"
     r"([\d,]+\.\d{2})\s+[\d,]+\.\d{2}\s+(.+)$"
 )
 _KBANK_DATE_LINE = re.compile(r"^\d{2}-\d{2}-\d{2}\s")
@@ -271,7 +276,7 @@ _KBANK_SKIP = re.compile(
     r"^(KBPDF|ออกโดย|หน้าที่|PAGE/OF|ที่ DD\.|ชื่อบัญชี|สาขา|เลขที่|รอบระหว่าง|รวมถอน|รวมฝาก|"
     r"ยอดยกไป|ยอดคงเหลือ|วันที่ เวลา|วันที่มีผล|ช่องทาง|\(บาท\)|รายละเอียด|--\s*\d+\s*of|\d+/\d+\(\d+\))"
 )
-_KBANK_INCOMING = {"รับโอนเงิน", "ฝาก", "ฝากเงินสด", "ดอกเบี้ย"}
+_KBANK_INCOMING = {"รับโอนเงิน", "ฝาก", "ฝากเงินสด", "ดอกเบี้ย", "Deposit", "Interest"}
 
 
 def parse_kbank(raw: str) -> list[dict]:
@@ -284,7 +289,7 @@ def parse_kbank(raw: str) -> list[dict]:
             i += 1
             continue
 
-        desc = m.group(6)
+        desc = m.group(7)
         j = i + 1
         glued = 0
         while j < len(lines) and glued < 2:
@@ -296,7 +301,7 @@ def parse_kbank(raw: str) -> list[dict]:
             glued += 1
 
         try:
-            amount = float(m.group(5).replace(",", ""))
+            amount = float(m.group(6).replace(",", ""))
         except ValueError:
             i += 1
             continue
@@ -304,8 +309,14 @@ def parse_kbank(raw: str) -> list[dict]:
             i += 1
             continue
 
-        tx_type = m.group(4)
-        incoming = tx_type in _KBANK_INCOMING
+        action1 = m.group(4)
+        action2 = m.group(5)  # may be None
+        # For English KBank 2-word actions, the second token holds direction
+        # (e.g. "Transfer Deposit" = incoming, "Transfer Withdrawal" = outgoing).
+        # For single-token actions (Thai or "Payment"/"Fee"), fall back to action1.
+        direction_token = action2 if action2 else action1
+        incoming = direction_token in _KBANK_INCOMING
+        tx_type = f"{action1} {action2}" if action2 else action1
         date = f"20{m.group(3)}-{m.group(2).zfill(2)}-{m.group(1).zfill(2)}"
 
         merchant = desc
@@ -341,7 +352,10 @@ def parse_kbank(raw: str) -> list[dict]:
 _GSB_LINE = re.compile(
     r"^(\d{2})/(\d{2})/(\d{4})\s+(.+?)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+\d+\s+\d+"
 )
-_GSB_DEPOSIT = re.compile(r"\b(Deposit|ฝาก|รับโอน|เงินเข้า|Interest|ดอกเบี้ย)\b", re.I)
+_GSB_DEPOSIT = re.compile(
+    r"\b(Deposit|ฝาก|รับโอน|เงินเข้า|Interest|ดอกเบี้ย|Credit|CR)\b",
+    re.I,
+)
 _GSB_NOISE = re.compile(
     r"^(ข้อมูลรายการ|โดยผู้ใช้|หน้า \d+|-- \d+|รายการเดินบัญชี|ชื่อบัญชี|ประเภทบัญชี|"
     r"เลขที่บัญชี|สาขาเจ้าของ|รอบวันที่|ยอดยกมา|วันที่\s+รายการ|สาขา\s+รายการ)"
@@ -405,12 +419,18 @@ def _gsb_desc_map(desc: str) -> str:
     elif re.search(r"Bill Payment", desc, re.I):
         label = "ชำระบิล"
         label_keywords = [r"Bill\s*Payment"]
+    elif re.search(r"\bWithdraw(?:al)?\b", desc, re.I):
+        label = "ถอนเงินสด"
+        label_keywords = [r"Withdraw(?:al)?"]
+    elif re.search(r"\bFee\b", desc, re.I):
+        label = "ค่าธรรมเนียม"
+        label_keywords = [r"Fee"]
     elif re.search(r"Transfer", desc, re.I):
         label = "โอนเงิน"
         label_keywords = [r"Transfer"]
-    elif re.search(r"Payment", desc, re.I):
+    elif re.search(r"\bPay(?:ment)?\b", desc, re.I):
         label = "ชำระเงิน"
-        label_keywords = [r"Payment"]
+        label_keywords = [r"Pay(?:ment)?"]
 
     if label is not None:
         extra = _gsb_extra(desc, label_keywords)
@@ -458,7 +478,16 @@ def parse_gsb(raw: str) -> list[dict]:
 _KTB_LINE = re.compile(
     r"^(\d{2})/(\d{2})/(\d{2})\s+(.+)\s+([\d,]+\.\d{2})\s+(-?[\d,]+\.\d{2})\s+(\d{3,4})\s*$"
 )
-_KTB_DEPOSIT = re.compile(r"^(เงินโอนเข้า|ฝากเงิน|ดอกเบี้ย|รับเงิน|รับโอน)")
+# Deposit/income markers — Thai (primary) + English fallback for future
+# English statement layouts. "CR" is kept short so we require a word
+# boundary; "Transfer In" / "Transfer Deposit" are 2-token forms KTB has
+# been seen to use on English statements. "Transfer" alone is ambiguous so
+# it stays OUT of this set (default outgoing for safety).
+_KTB_DEPOSIT = re.compile(
+    r"^(เงินโอนเข้า|ฝากเงิน|ดอกเบี้ย|รับเงิน|รับโอน|"
+    r"Transfer\s+(?:In|Deposit)|Deposit|Interest|Credit|CR\b)",
+    re.IGNORECASE,
+)
 _KTB_NOISE = re.compile(
     r"^(รายการเดินบัญชี|รายการบัญชีระหว่าง|วันที่ส่ง|ชื่อบัญชี|ประเภทบัญชี|สาขา|เลขที่บัญชี|ที่อยู่|"
     r"วงเงิน|สกุลเงิน|วันที่/เวลา|บริษัท ธนาคาร|เลขที่ 35|ติดต่อ|-- \d+|หน้า \d+|ยอดยกมา|รวม|"
@@ -535,6 +564,32 @@ def _ktb_merchant(desc: str) -> str:
     elif re.search(r"ค่าธรรมเนียม", desc, re.I):
         label = "ค่าธรรมเนียม"
         label_keywords = [r"ค่าธรรมเนียม"]
+    # ── English fallback labels (defensive — for future English KTB statements).
+    # Order: deposit/withdraw before transfer because they're more specific;
+    # bill payment before generic payment for routing into home category.
+    elif re.search(r"\bBill\s*Payment\b", desc, re.I):
+        label = "ชำระบิล"
+        label_keywords = [r"Bill\s*Payment"]
+    elif re.search(r"\bDeposit\b", desc, re.I):
+        label = "ฝากเงิน"
+        label_keywords = [r"Deposit"]
+    elif re.search(r"\bWithdraw(?:al)?\b", desc, re.I):
+        label = "ถอนเงินสด"
+        label_keywords = [r"Withdraw(?:al)?"]
+    elif re.search(r"\bInterest\b", desc, re.I):
+        label = "ดอกเบี้ย"
+        label_keywords = [r"Interest"]
+    elif re.search(r"\bFee\b", desc, re.I):
+        label = "ค่าธรรมเนียม"
+        label_keywords = [r"Fee"]
+    elif re.search(r"\bTransfer\b", desc, re.I):
+        # Conservative: Transfer alone is treated as outgoing transfer; the
+        # _KTB_DEPOSIT regex flips direction for "Transfer In/Deposit" forms.
+        label = "โอนเงินออก"
+        label_keywords = [r"Transfer"]
+    elif re.search(r"\bPayment\b", desc, re.I):
+        label = "ชำระเงิน"
+        label_keywords = [r"Payment"]
 
     if label is not None:
         extra = _ktb_extra(desc, label_keywords)
@@ -578,11 +633,17 @@ def parse_ktb(raw: str) -> list[dict]:
 
 # ─── SCB parser ─────────────────────────────────────────────────────────────
 
+# Note: trailing group is permissive ((.*)$ instead of \s*$) because some SCB
+# statements (especially OpenPDF/JasperReports outputs) glue the Thai
+# description directly onto the balance with no separating space — e.g.
+# "...944.99จ่ายบิล...". The original strict tail rejected 60% of rows on
+# such files. The captured tail is treated as inline description in
+# parse_scb() and falls back to the previous-line heuristic when empty.
 _SCB_TX = re.compile(
-    r"^(\d{2})/(\d{2})/(\d{2})\s+\d{2}:\d{2}\s+(X1|X2)\s+(\S+)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s*$"
+    r"^(\d{2})/(\d{2})/(\d{2})\s+\d{2}:\d{2}\s+(X1|X2)\s+(\S+)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})(.*)$"
 )
 _SCB_IN = re.compile(
-    r"^(\d{2})/(\d{2})/(\d{2})\s+\d{2}:\d{2}\s+IN\s+\S+\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s*$"
+    r"^(\d{2})/(\d{2})/(\d{2})\s+\d{2}:\d{2}\s+IN\s+(\S+)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})(.*)$"
 )
 _SCB_NOISE = re.compile(
     r"^(ธนาคารไทยพาณิชย์|THE SIAM COMMERCIAL|ใบแจ้งรายการ|STATEMENT OF|สาขา$|ชื่อ - สกุล|Name$|"
@@ -697,6 +758,37 @@ def _scb_merchant(desc: str) -> str:
         name = m.group(2).strip()
         return f"โอนไป ({bank}) {name}".strip() if name else f"โอนไป ({bank})"
 
+    # ── English fallback prefixes (defensive — for future English SCB
+    # statements). We rely on simple prefix matches because English SCB
+    # descriptions seen elsewhere tend to start with the action verb.
+    # Order: bill payment / deposit / withdraw before generic transfer/payment.
+    m = re.match(r"^Bill\s*Payment\s*(.*)$", d, re.I)
+    if m:
+        rest = m.group(1).strip()
+        return f"จ่ายบิล {rest}".strip() if rest else "จ่ายบิล"
+    m = re.match(r"^Deposit\s*(.*)$", d, re.I)
+    if m:
+        return "ฝากเงิน"
+    m = re.match(r"^Interest\s*(.*)$", d, re.I)
+    if m:
+        return "ดอกเบี้ย"
+    m = re.match(r"^Withdraw(?:al)?\s*(.*)$", d, re.I)
+    if m:
+        return "ถอนเงินสด"
+    m = re.match(r"^Fee\s*(.*)$", d, re.I)
+    if m:
+        return "ค่าธรรมเนียม"
+    # Generic Transfer/Payment — conservative outgoing label; categorize()
+    # falls back to "other" when no merchant keyword survives.
+    m = re.match(r"^Transfer\s*(.*)$", d, re.I)
+    if m:
+        rest = m.group(1).strip()
+        return f"โอนเงิน {rest}".strip() if rest else "โอนเงิน"
+    m = re.match(r"^Payment\s*(.*)$", d, re.I)
+    if m:
+        rest = m.group(1).strip()
+        return f"ชำระเงิน {rest}".strip() if rest else "ชำระเงิน"
+
     # Legacy inter-bank fallback (kept for back-compat with previous fixtures
     # where description was a free-form Thai bank name without the new
     # KBANK/KTB+xNNNN tokens). Drops "/X####" then routes via _scb_extra.
@@ -740,12 +832,14 @@ def parse_scb(raw: str) -> list[dict]:
         if im:
             try:
                 yr = 2000 + int(im.group(3))
-                amt = float(im.group(4).replace(",", ""))
+                amt = float(im.group(5).replace(",", ""))
             except ValueError:
                 continue
             if amt > 0:
                 dt = f"{yr}-{im.group(2).zfill(2)}-{im.group(1).zfill(2)}"
-                merchant = _scb_merchant(_scb_prev_desc(lines, i)) or "ดอกเบี้ย"
+                inline_desc = (im.group(7) or "").strip()
+                desc_source = inline_desc or _scb_prev_desc(lines, i)
+                merchant = _scb_merchant(desc_source) or "ดอกเบี้ย"
                 txs.append({
                     "date": dt,
                     "merchant": merchant,
@@ -766,7 +860,12 @@ def parse_scb(raw: str) -> list[dict]:
         if amount == 0:
             continue
         date = f"{year}-{m.group(2).zfill(2)}-{m.group(1).zfill(2)}"
-        merchant = _scb_merchant(_scb_prev_desc(lines, i))
+        # Prefer inline description (same-line trailing text after balance);
+        # fall back to previous-line description for older SCB layouts where
+        # the merchant/payee line preceded the transaction row.
+        inline_desc = (m.group(8) or "").strip()
+        desc_source = inline_desc or _scb_prev_desc(lines, i)
+        merchant = _scb_merchant(desc_source)
         is_credit = m.group(4) == "X1"
         tx_type = "ฝาก" if is_credit else "ถอน"
         txs.append({
