@@ -69,6 +69,8 @@ function App() {
   const [resetOpen, setResetOpen] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [resetMessage, setResetMessage] = useState('');
+  // Edit Category — Learning Loop (Day 5) toast feedback
+  const [editToast, setEditToast] = useState('');
   const notifRef = useRef(null);
 
   // ─── Load persisted data from backend when the user logs in ───
@@ -319,6 +321,48 @@ function App() {
     }
   };
 
+  // ─── Edit Category — Learning Loop (Day 5) ───
+  // PATCH /api/transactions/<tx_id> { user_id, category, save_pattern }
+  // → updates local txs immediately + shows toast.
+  // If save_pattern=true, backend remembers merchant→category for future imports.
+  const editCategory = async (txId, newCategory, savePattern) => {
+    if (!user || !user.id) return { ok: false };
+    try {
+      const res = await fetch(`/api/transactions/${txId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: user.id,
+          category: newCategory,
+          save_pattern: !!savePattern,
+        }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (res.ok) {
+        // Update local txs state — change category of this tx
+        setTxs((prev) => prev.map((tx) => tx.id === txId ? { ...tx, category: newCategory } : tx));
+        // Stale AI summary (category mix changed)
+        setAiResult(null);
+        // Toast: success with or without pattern flag
+        const msg = (j.override_saved || savePattern)
+          ? t(I18N.edit_cat_success_with_pattern, lang)
+          : t(I18N.edit_cat_success, lang);
+        setEditToast(msg);
+        setTimeout(() => setEditToast(''), 3500);
+        return { ok: true, override_saved: !!j.override_saved };
+      }
+      // Non-2xx — show failure toast
+      setEditToast(t(I18N.edit_cat_failed, lang));
+      setTimeout(() => setEditToast(''), 3500);
+      return { ok: false };
+    } catch (err) {
+      console.error('[editCategory] failed', err);
+      setEditToast(t(I18N.edit_cat_failed, lang));
+      setTimeout(() => setEditToast(''), 3500);
+      return { ok: false };
+    }
+  };
+
   // ─── Reset Statement (Day 4) ───
   // Calls AJ's POST /api/reset?user_id=<id> → wipes txs, imports, notifications.
   // Keeps: user account, preferences (incl. category budgets), LINE link.
@@ -510,7 +554,7 @@ function App() {
             <Dashboard state={state} setView={setView} openChat={() => setChatOpen(true)} />
           </>
         }
-        {view === 'transactions' && <Transactions state={state} addTxs={addTxs} />}
+        {view === 'transactions' && <Transactions state={state} addTxs={addTxs} editCategory={editCategory} />}
         {view === 'upload' && <Upload state={state} addTxs={addTxs} setPendingImport={setPendingImport} lastImport={lastImport} deleteLastImport={deleteLastImport} />}
         {view === 'budgets' && <Budgets state={state} updateCatBudget={updateCatBudget} resetCatBudgets={resetCatBudgets} />}
         {view === 'insights' &&
@@ -601,6 +645,29 @@ function App() {
             animation: 'fadeIn 240ms ease-out',
           }}>
           {resetMessage}
+        </div>
+      }
+
+      {/* Edit-category toast (Day 5 Learning Loop feedback) */}
+      {editToast &&
+        <div
+          role="status"
+          style={{
+            position: 'fixed',
+            bottom: resetMessage ? 84 : 24,
+            right: 24,
+            zIndex: 250,
+            background: '#111114',
+            border: '1px solid var(--accent)',
+            borderRadius: 14,
+            padding: '12px 18px',
+            color: 'var(--ink)',
+            fontSize: 13,
+            maxWidth: 380,
+            boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+            animation: 'fadeIn 240ms ease-out',
+          }}>
+          {editToast}
         </div>
       }
     </div>);

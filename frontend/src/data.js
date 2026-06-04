@@ -227,6 +227,19 @@ const I18N = {
   prompt_2: { th: 'แนะนำวิธีลดรายจ่ายให้หน่อย', en: 'How can I cut expenses?' },
   prompt_3: { th: 'ฉันออมพอแล้วหรือยัง?', en: 'Am I saving enough?' },
   prompt_4: { th: 'เปรียบเทียบกับเดือนก่อน', en: 'Compare to last month' },
+  // Edit Category — Learning Loop (Day 5)
+  edit_cat_btn:                  { th: 'แก้หมวด',                                en: 'Edit category' },
+  edit_cat_title:                { th: 'แก้หมวดของรายการ',                       en: 'Edit category' },
+  edit_cat_current:              { th: 'หมวดปัจจุบัน',                           en: 'Current category' },
+  edit_cat_new:                  { th: 'เลือกหมวดใหม่',                          en: 'Choose new category' },
+  edit_cat_save_pattern:         { th: 'จำตัวเลือกนี้สำหรับ "{merchant}" ในอนาคต', en: 'Remember this choice for "{merchant}" in the future' },
+  edit_cat_save_pattern_hint:    { th: 'ครั้งต่อไปที่เจอร้านนี้ ระบบจะจัดหมวดให้อัตโนมัติ', en: 'Next time we see this merchant, we\'ll auto-categorise it.' },
+  edit_cat_cancel:               { th: 'ยกเลิก',                                en: 'Cancel' },
+  edit_cat_save:                 { th: 'บันทึก',                                en: 'Save' },
+  edit_cat_saving:               { th: 'กำลังบันทึก...',                         en: 'Saving…' },
+  edit_cat_success:              { th: 'อัปเดตหมวดสำเร็จ',                       en: 'Category updated' },
+  edit_cat_success_with_pattern: { th: 'อัปเดตหมวดสำเร็จ · จะใช้กับร้านนี้ครั้งต่อไป', en: 'Category updated — saved pattern for future' },
+  edit_cat_failed:               { th: 'อัปเดตไม่สำเร็จ ลองอีกครั้ง',             en: 'Update failed — please try again' },
   // Number-style helpers (no string)
 };
 

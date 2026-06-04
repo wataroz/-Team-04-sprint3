@@ -579,7 +579,7 @@ function Dashboard({ state, setView, openChat }) {
 // ─────────────────────────────────────────────────────────────
 // Transactions
 // ─────────────────────────────────────────────────────────────
-function Transactions({ state, addTxs }) {
+function Transactions({ state, addTxs, editCategory }) {
   const { txs, currency, lang } = state;
   const [search, setSearch] = useState('');
   const [filterCat, setFilterCat] = useState(null);
@@ -587,6 +587,8 @@ function Transactions({ state, addTxs }) {
   const [sortBy, setSortBy] = useState('date-desc'); // date-desc | date-asc | amount-desc | amount-asc
   const [filterOpen, setFilterOpen] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
+  // Edit Category — Learning Loop (Day 5). Holds the tx being edited (or null).
+  const [editingTx, setEditingTx] = useState(null);
   const filterRef = useRef(null);
 
   useEffect(() => {
@@ -723,7 +725,15 @@ function Transactions({ state, addTxs }) {
                 <span>{formatGroupDate(date, lang)}</span>
                 <span className="total">−{fmt(dayTotal, currency, lang)}</span>
               </div>
-              {items.map((tx, i) => <TransactionRow key={i} tx={tx} currency={currency} lang={lang} />)}
+              {items.map((tx, i) => (
+                <EditableTxRow
+                  key={tx.id != null ? `tx-${tx.id}` : `i-${date}-${i}`}
+                  tx={tx}
+                  currency={currency}
+                  lang={lang}
+                  canEdit={!!editCategory && tx.id != null && tx.category !== 'income'}
+                  onEdit={() => setEditingTx(tx)} />
+              ))}
             </div>);
 
         })}
@@ -736,8 +746,227 @@ function Transactions({ state, addTxs }) {
         onClose={() => setModalOpen(false)} />
 
       }
+
+      {editingTx &&
+      <EditCategoryModal
+        lang={lang}
+        tx={editingTx}
+        onClose={() => setEditingTx(null)}
+        onSave={async (newCat, savePattern) => {
+          const r = await editCategory(editingTx.id, newCat, savePattern);
+          if (r && r.ok) setEditingTx(null);
+          return r;
+        }} />
+      }
     </div>);
 
+}
+
+// ─────────────────────────────────────────────────────────────
+// EditableTxRow — wraps the standard TransactionRow look but adds
+// a small pencil button next to the category pill. Day 5 Learning Loop.
+// We re-render the whole row locally (rather than monkey-patching the
+// shared TransactionRow in ux_ui/) so this change stays in frontend/.
+// ─────────────────────────────────────────────────────────────
+function EditableTxRow({ tx, currency, lang, canEdit, onEdit }) {
+  const cat = CATEGORIES[tx.category] || CATEGORIES.other;
+  const isIncome = tx.amount > 0;
+  const parts = fmtParts(tx.amount, currency, lang);
+  return (
+    <div className="tx-row">
+      <div className="tx-icon" style={{ background: `${cat.color}22`, color: cat.color }}>
+        <span style={{ fontSize: 16 }}>{cat.icon}</span>
+      </div>
+      <div>
+        <div className="tx-merchant">{tx.merchant}</div>
+        <div className="tx-meta">
+          <span className="tx-cat-pill">{t(cat, lang)}</span>
+          {canEdit &&
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onEdit(); }}
+              title={t(I18N.edit_cat_btn, lang)}
+              aria-label={t(I18N.edit_cat_btn, lang)}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 22,
+                height: 22,
+                marginLeft: -2,
+                padding: 0,
+                border: '1px solid var(--border)',
+                borderRadius: 7,
+                background: 'transparent',
+                color: 'var(--ink-subtle)',
+                cursor: 'pointer',
+                transition: 'color 160ms ease, border-color 160ms ease, background 160ms ease',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = 'var(--accent)';
+                e.currentTarget.style.borderColor = 'var(--accent)';
+                e.currentTarget.style.background = 'var(--accent-soft)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = 'var(--ink-subtle)';
+                e.currentTarget.style.borderColor = 'var(--border)';
+                e.currentTarget.style.background = 'transparent';
+              }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="1.8"
+                strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 20h9" />
+                <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+              </svg>
+            </button>
+          }
+          <span>·</span>
+          <span>{formatDate(tx.date, lang)}</span>
+          {tx.note && <><span>·</span><span style={{ fontStyle: 'italic' }}>{tx.note}</span></>}
+        </div>
+      </div>
+      <div className={'tx-amount ' + (isIncome ? 'income' : 'expense')}>
+        {isIncome ? '+' : ''}{parts.sign}{parts.currency}{parts.digits}
+      </div>
+      <div className="tx-arrow">{Ic.arrow}</div>
+    </div>);
+}
+
+// ─────────────────────────────────────────────────────────────
+// EditCategoryModal — Day 5 Learning Loop
+// Lets the user pick a new category for one transaction, with an opt-in
+// "remember for this merchant" checkbox (default ON).
+// ─────────────────────────────────────────────────────────────
+function EditCategoryModal({ lang, tx, onClose, onSave }) {
+  const currentCat = CATEGORIES[tx.category] || CATEGORIES.other;
+  const [selected, setSelected] = useState(tx.category && tx.category !== 'income' ? tx.category : 'food');
+  const [savePattern, setSavePattern] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape' && !saving) onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose, saving]);
+
+  // 8 categories per spec (excludes 'income' — that's a sign, not a spend bucket)
+  const catKeys = ['food', 'transport', 'shopping', 'home', 'entertain', 'groceries', 'health', 'other'];
+
+  const handleSave = async () => {
+    if (saving) return;
+    setSaving(true);
+    const r = await onSave(selected, savePattern);
+    // If save failed, keep modal open so the user can retry; toast shows reason.
+    if (!r || !r.ok) setSaving(false);
+  };
+
+  const patternLabel = t(I18N.edit_cat_save_pattern, lang).replace('{merchant}', tx.merchant || '');
+
+  return (
+    <div className="modal-overlay" onClick={saving ? undefined : onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 560 }}>
+        <div className="modal-head">
+          <h3>{t(I18N.edit_cat_title, lang)}</h3>
+          {!saving &&
+            <button className="icon-btn" onClick={onClose}>{Ic.close}</button>
+          }
+        </div>
+        <div className="modal-body">
+          <div className="field">
+            <label className="field-label">{t(I18N.edit_cat_current, lang)}</label>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              padding: '10px 12px',
+              borderRadius: 10,
+              background: 'var(--surface)',
+              border: '1px solid var(--border)',
+              fontSize: 13.5,
+              color: 'var(--ink)',
+            }}>
+              <span style={{
+                display: 'inline-flex',
+                width: 26, height: 26,
+                alignItems: 'center', justifyContent: 'center',
+                borderRadius: 8,
+                background: `${currentCat.color}22`,
+                color: currentCat.color,
+                fontSize: 14,
+              }}>{currentCat.icon}</span>
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                <span style={{ fontWeight: 500 }}>{tx.merchant}</span>
+                <span style={{ fontSize: 12, color: 'var(--ink-muted)' }}>{t(currentCat, lang)}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="field">
+            <label className="field-label">{t(I18N.edit_cat_new, lang)}</label>
+            <div className="cat-picker">
+              {catKeys.map((k) => {
+                const cat = CATEGORIES[k];
+                return (
+                  <div
+                    key={k}
+                    className={'cat-pick' + (selected === k ? ' active' : '')}
+                    onClick={() => setSelected(k)}>
+                    <span className="cat-pick-icon">{cat.icon}</span>
+                    <span>{t(cat, lang)}</span>
+                  </div>);
+              })}
+            </div>
+          </div>
+
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: 10,
+              padding: '12px 14px',
+              borderRadius: 10,
+              background: savePattern ? 'var(--accent-soft)' : 'var(--surface)',
+              border: '1px solid ' + (savePattern ? 'var(--accent)' : 'var(--border)'),
+              cursor: 'pointer',
+              transition: 'background 160ms ease, border-color 160ms ease',
+            }}>
+            <input
+              type="checkbox"
+              checked={savePattern}
+              onChange={(e) => setSavePattern(e.target.checked)}
+              style={{
+                marginTop: 2,
+                accentColor: 'var(--accent)',
+                cursor: 'pointer',
+                width: 16, height: 16,
+                flexShrink: 0,
+              }} />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              <span style={{ fontSize: 13.5, color: 'var(--ink)', lineHeight: 1.45 }}>{patternLabel}</span>
+              <span style={{ fontSize: 11.5, color: 'var(--ink-muted)', lineHeight: 1.45 }}>
+                {t(I18N.edit_cat_save_pattern_hint, lang)}
+              </span>
+            </div>
+          </label>
+        </div>
+        <div className="modal-foot">
+          <button
+            className="btn"
+            onClick={onClose}
+            disabled={saving}
+            style={{ opacity: saving ? 0.5 : 1 }}>
+            {t(I18N.edit_cat_cancel, lang)}
+          </button>
+          <button
+            className="btn btn-accent"
+            onClick={handleSave}
+            disabled={saving}
+            style={{ opacity: saving ? 0.7 : 1 }}>
+            {Ic.check}{saving ? t(I18N.edit_cat_saving, lang) : t(I18N.edit_cat_save, lang)}
+          </button>
+        </div>
+      </div>
+    </div>);
 }
 
 // ─────────────────────────────────────────────────────────────
