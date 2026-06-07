@@ -24,7 +24,7 @@ import logging
 import os
 import re
 from base64 import b64decode
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from linebot.v3 import WebhookHandler
 from linebot.v3.exceptions import InvalidSignatureError
@@ -50,7 +50,15 @@ from linebot.v3.webhooks import (
 )
 
 from backend.db import SessionLocal
-from backend.models import Import, LineUser, Notification, Preference, Transaction, User
+from backend.models import (
+    Import,
+    LinePendingPdf,
+    LineUser,
+    Notification,
+    Preference,
+    Transaction,
+    User,
+)
 from logic_ai.pdf_parser import parse_statement
 
 log = logging.getLogger("moneymind.line")
@@ -591,7 +599,295 @@ def _cmd_tutorial() -> str:
     )
 
 
+# ─── Pending (encrypted) PDF state — chat-driven password flow ─────────────
+
+# PDFs uploaded via LINE that come back as encrypted are stashed in
+# ``LinePendingPdf`` so the next text message can be used as the password.
+# All three helpers below assume the caller owns the SQLAlchemy session
+# (commit/close) — they never commit themselves so callers can batch the
+# state change with other work (e.g. bumping ``attempts`` and committing once).
+
+_PENDING_PDF_TTL = timedelta(minutes=5)
+_PENDING_PDF_MAX_ATTEMPTS = 3
+
+
+def _save_pending_pdf(
+    db, line_user_id: str, pdf_bytes: bytes, filename: str = ""
+) -> None:
+    """Upsert a pending encrypted PDF for this LINE user (delete-then-insert).
+
+    The ``LinePendingPdf`` table enforces unique ``line_user_id`` so we
+    explicitly clear any existing row first — overwriting an abandoned
+    upload is the desired behaviour (latest send wins).
+    """
+    db.query(LinePendingPdf).filter_by(line_user_id=line_user_id).delete(
+        synchronize_session=False
+    )
+    db.add(
+        LinePendingPdf(
+            line_user_id=line_user_id,
+            pdf_bytes=pdf_bytes,
+            filename=filename or "",
+            attempts=0,
+        )
+    )
+
+
+def _get_pending_pdf(db, line_user_id: str) -> LinePendingPdf | None:
+    """Return the user's pending PDF, deleting it first if it has expired.
+
+    The expiry check is inline (no cron) — if ``created_at`` is older than
+    ``_PENDING_PDF_TTL`` we drop the row and return ``None``. Caller is
+    responsible for committing whatever change this triggers.
+    """
+    row = db.query(LinePendingPdf).filter_by(line_user_id=line_user_id).first()
+    if row is None:
+        return None
+    created = row.created_at
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    if datetime.now(timezone.utc) - created > _PENDING_PDF_TTL:
+        db.delete(row)
+        return None
+    return row
+
+
+def _delete_pending_pdf(db, line_user_id: str) -> None:
+    db.query(LinePendingPdf).filter_by(line_user_id=line_user_id).delete(
+        synchronize_session=False
+    )
+
+
+def _try_handle_pending_pdf(
+    reply_token: str, line_user_id: str, raw_text: str
+) -> bool:
+    """If a pending encrypted PDF exists for this user, consume ``raw_text``.
+
+    Returns ``True`` when this call handled the message (and the caller
+    should ``return`` immediately), ``False`` when there was no pending
+    upload and the normal text pipeline should run.
+
+    Branches handled here:
+      * cancel keywords (``ยกเลิก`` / ``cancel``) → delete pending + ack
+      * password attempt → ``parse_statement(pdf_bytes, password=raw_text)``
+          * success → delete pending + run the normal ingest pipeline
+          * wrong password → bump attempts; on 3rd wrong attempt delete
+            pending and tell the user to retry from scratch
+          * any other ValueError → delete pending + surface error message
+
+    Security:
+      * ``raw_text`` is the password and is never logged anywhere.
+      * Only the wrong-attempt counter is persisted.
+    """
+    db = SessionLocal()
+    pdf_bytes: bytes | None = None
+    filename = ""
+    try:
+        pending = _get_pending_pdf(db, line_user_id)
+        if pending is None:
+            # Either nothing pending, or the row was just expired-out by
+            # _get_pending_pdf. Commit the delete (if any) and bail.
+            db.commit()
+            return False
+
+        # Explicit cancel: word-only (so passwords that happen to contain
+        # "ยกเลิก" as a substring are not misinterpreted).
+        if raw_text.strip().lower() in ("ยกเลิก", "cancel"):
+            _delete_pending_pdf(db, line_user_id)
+            db.commit()
+            _reply(reply_token,
+                   "ยกเลิกการอัปโหลดแล้วครับ\nส่งไฟล์ PDF ใหม่ได้เลยนะครับ 📄",
+                   user_id=line_user_id)
+            return True
+
+        # Treat the message as the password. Snapshot bytes + filename
+        # before we touch the row so we can use them after the session
+        # closes (parse_statement is CPU-bound — keep it out of the txn).
+        pdf_bytes = pending.pdf_bytes
+        filename = pending.filename or "line_upload.pdf"
+
+        try:
+            bank, txs = parse_statement(pdf_bytes, password=raw_text)
+        except ValueError as e:
+            msg = str(e)
+            if msg.startswith("รหัส PDF ไม่ถูกต้อง"):
+                pending.attempts += 1
+                attempts = pending.attempts
+                if attempts >= _PENDING_PDF_MAX_ATTEMPTS:
+                    _delete_pending_pdf(db, line_user_id)
+                    db.commit()
+                    log.info(
+                        "line pending pdf cancelled after %d wrong attempts",
+                        attempts,
+                    )
+                    _reply(
+                        reply_token,
+                        f"❌ รหัสผิด {attempts} ครั้ง — ยกเลิกการอัปโหลด\n"
+                        "ลองส่งไฟล์ใหม่อีกครั้งนะครับ",
+                        user_id=line_user_id,
+                    )
+                    return True
+                db.commit()
+                log.info(
+                    "line user retrying with password (attempts=%d/%d)",
+                    attempts, _PENDING_PDF_MAX_ATTEMPTS,
+                )
+                _reply(
+                    reply_token,
+                    f"รหัสไม่ถูกต้องครับ ({attempts}/{_PENDING_PDF_MAX_ATTEMPTS}) "
+                    "ลองอีกครั้ง หรือพิมพ์ \"ยกเลิก\"",
+                    user_id=line_user_id,
+                )
+                return True
+
+            # Non-credentials parse error after a (possibly correct) password
+            # — clear the pending row so the user isn't stuck, then surface
+            # the message. ``e`` itself never contains the password value.
+            _delete_pending_pdf(db, line_user_id)
+            db.commit()
+            log.exception(
+                "PDF parse failed after password unlock for %s", line_user_id
+            )
+            _reply(
+                reply_token,
+                f"❌ ไม่สามารถอ่านไฟล์ได้ครับ: {e}\n"
+                "ลองส่งไฟล์ PDF จากธนาคารที่รองรับใหม่นะครับ",
+                user_id=line_user_id,
+            )
+            return True
+
+        # Success — password was correct and the parser returned rows.
+        _delete_pending_pdf(db, line_user_id)
+        db.commit()
+    finally:
+        db.close()
+
+    # Ingest happens outside the pending-state session so it can manage
+    # its own DB session (mirrors how _handle_pdf calls _ingest_parsed_pdf).
+    user = _get_or_create_user(line_user_id, "")
+    _ingest_parsed_pdf(reply_token, line_user_id, user, bank, txs, filename=filename)
+    return True
+
+
 # ─── PDF file handler ──────────────────────────────────────────────────────
+
+def _ingest_parsed_pdf(
+    reply_token: str,
+    line_user_id: str | None,
+    user: User,
+    bank: str,
+    txs: list,
+    filename: str = "line_upload.pdf",
+) -> None:
+    """Persist already-parsed transactions and reply with the import summary.
+
+    Extracted from ``_handle_pdf`` so both the normal upload path and the
+    "unlocked after password retry" path can share the exact same dedup +
+    notification + budget-alert + reply pipeline.
+    """
+    if not txs:
+        _reply(
+            reply_token,
+            "ไม่พบรายการในไฟล์ PDF นี้ครับ\nลองส่งไฟล์ statement จากธนาคารอีกครั้งนะครับ",
+            user_id=line_user_id,
+        )
+        return
+
+    # Lazy import to avoid the circular: app.py imports line_bot for the
+    # webhook route, so importing app at module load would break startup.
+    from backend.app import _apply_overrides, _dedup_build_rows
+
+    created = 0
+    skipped = 0
+    db = SessionLocal()
+    try:
+        from backend.models import Import as ImportModel
+        imp = ImportModel(
+            user_id=user.id,
+            filename=filename or "line_upload.pdf",
+            bank=bank,
+            count=len(txs),
+        )
+        db.add(imp)
+        db.commit()
+        db.refresh(imp)
+
+        # Learning Loop: apply saved merchant→category overrides BEFORE
+        # dedup so user-taught categories survive into the DB.
+        _apply_overrides(db, user.id, txs)
+        rows, skipped = _dedup_build_rows(db, user.id, txs, imp.id)
+        created = len(rows)
+        if rows:
+            db.bulk_save_objects(rows)
+
+        # Reflect the actually-inserted count on the Import audit row so
+        # the imports list doesn't lie about how much was added.
+        imp.count = created
+
+        # Create notification — describe what actually landed in DB.
+        if created > 0:
+            desc_th = f"เพิ่ม {created} รายการจาก {bank.upper()} ผ่าน LINE"
+            desc_en = f"Added {created} transactions from {bank.upper()} via LINE"
+            if skipped:
+                desc_th += f" (ข้ามซ้ำ {skipped})"
+                desc_en += f" (skipped {skipped} duplicates)"
+            title = {"th": "นำเข้าสำเร็จ (LINE)", "en": "Import success (LINE)"}
+            kind = "good"
+        else:
+            desc_th = f"ไม่มีรายการใหม่ — ข้ามซ้ำทั้งหมด {skipped} รายการ"
+            desc_en = f"No new transactions — {skipped} duplicates skipped"
+            title = {"th": "ไม่มีรายการใหม่ (LINE)", "en": "No new transactions (LINE)"}
+            kind = "info"
+
+        n = Notification(
+            user_id=user.id,
+            kind=kind,
+            icon="check" if created > 0 else "bell",
+            title=title,
+            desc={"th": desc_th, "en": desc_en},
+            unread=True,
+        )
+        db.add(n)
+        db.commit()
+    finally:
+        db.close()
+
+    # Only push budget alerts when we actually added new spending — if
+    # everything was a duplicate, monthly totals didn't change.
+    if created > 0:
+        try:
+            _push_budget_alerts(user.id)
+        except Exception:
+            log.exception("budget alert after LINE PDF import failed")
+
+    bank_name = {"kbank": "กสิกรไทย", "scb": "ไทยพาณิชย์",
+                 "ktb": "กรุงไทย", "gsb": "ออมสิน"}.get(bank, bank.upper())
+
+    if created > 0:
+        dup_line = f"\nข้ามรายการซ้ำ: {skipped} รายการ" if skipped else ""
+        _reply(
+            reply_token,
+            f"✅ นำเข้าสำเร็จครับ!\n"
+            f"ธนาคาร: {bank_name}\n"
+            f"จำนวน: {created} รายการ"
+            f"{dup_line}\n\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"ลองพิมพ์ดูครับ:\n"
+            f"  📊 \"สรุป\" — ดูยอดรับ-จ่าย\n"
+            f"  📂 \"เดือนนี้\" — แยกหมวดหมู่\n"
+            f"  🔍 \"วิเคราะห์\" — คำแนะนำประหยัด",
+            user_id=line_user_id,
+        )
+    else:
+        _reply(
+            reply_token,
+            f"ℹ️ ไฟล์นี้เคยนำเข้าแล้วครับ\n"
+            f"ธนาคาร: {bank_name}\n"
+            f"ข้ามรายการซ้ำทั้งหมด: {skipped} รายการ\n\n"
+            f"ลองพิมพ์ \"สรุป\" เพื่อดูยอดเดิมได้เลย",
+            user_id=line_user_id,
+        )
+
 
 def _handle_pdf(reply_token: str, message_id: str, user: User,
                 line_user_id: str | None = None) -> None:
@@ -603,106 +899,43 @@ def _handle_pdf(reply_token: str, message_id: str, user: User,
         else:
             pdf_bytes = bytes(blob_content)
 
-        bank, txs = parse_statement(pdf_bytes)
-
-        if not txs:
-            _reply(reply_token, "ไม่พบรายการในไฟล์ PDF นี้ครับ\nลองส่งไฟล์ statement จากธนาคารอีกครั้งนะครับ", user_id=line_user_id)
-            return
-
-        # Lazy import to avoid the circular: app.py imports line_bot for the
-        # webhook route, so importing app at module load would break startup.
-        from backend.app import _apply_overrides, _dedup_build_rows
-
-        created = 0
-        skipped = 0
-        db = SessionLocal()
         try:
-            from backend.models import Import as ImportModel
-            imp = ImportModel(
-                user_id=user.id,
-                filename="line_upload.pdf",
-                bank=bank,
-                count=len(txs),
-            )
-            db.add(imp)
-            db.commit()
-            db.refresh(imp)
+            bank, txs = parse_statement(pdf_bytes)
+        except ValueError as e:
+            msg = str(e)
+            # Encrypted PDF with no password → stash bytes and ask the user
+            # for the password via chat. Their next text message is treated
+            # as the password (see ``on_text``). We never log the password.
+            if msg.startswith("PDF นี้ติดรหัส"):
+                if not line_user_id:
+                    # Without a LINE userId we can't key the pending row, so
+                    # we can only tell the user we can't help with this PDF.
+                    _reply(
+                        reply_token,
+                        "PDF นี้ติดรหัส 🔒 แต่ระบบไม่สามารถระบุผู้ใช้ LINE ได้\nกรุณาลองอัปโหลดผ่านเว็บแทนครับ",
+                        user_id=line_user_id,
+                    )
+                    return
+                db = SessionLocal()
+                try:
+                    _save_pending_pdf(db, line_user_id, pdf_bytes, filename="line_upload.pdf")
+                    db.commit()
+                finally:
+                    db.close()
+                _reply(
+                    reply_token,
+                    "PDF นี้ติดรหัส 🔒\n"
+                    "กรุณาส่งรหัสในข้อความถัดไป (ภายใน 5 นาที)\n"
+                    "ระบบไม่เก็บรหัส ใช้แค่ครั้งเดียวเพื่อปลด\n\n"
+                    "พิมพ์ \"ยกเลิก\" เพื่อยกเลิกการอัปโหลด",
+                    user_id=line_user_id,
+                )
+                return
+            # Any other parse ValueError → bubble to the outer handler below
+            # which already replies with a generic "can't read file" message.
+            raise
 
-            # Learning Loop: apply saved merchant→category overrides BEFORE
-            # dedup so user-taught categories survive into the DB.
-            _apply_overrides(db, user.id, txs)
-            rows, skipped = _dedup_build_rows(db, user.id, txs, imp.id)
-            created = len(rows)
-            if rows:
-                db.bulk_save_objects(rows)
-
-            # Reflect the actually-inserted count on the Import audit row so
-            # the imports list doesn't lie about how much was added.
-            imp.count = created
-
-            # Create notification — describe what actually landed in DB.
-            if created > 0:
-                desc_th = f"เพิ่ม {created} รายการจาก {bank.upper()} ผ่าน LINE"
-                desc_en = f"Added {created} transactions from {bank.upper()} via LINE"
-                if skipped:
-                    desc_th += f" (ข้ามซ้ำ {skipped})"
-                    desc_en += f" (skipped {skipped} duplicates)"
-                title = {"th": "นำเข้าสำเร็จ (LINE)", "en": "Import success (LINE)"}
-                kind = "good"
-            else:
-                desc_th = f"ไม่มีรายการใหม่ — ข้ามซ้ำทั้งหมด {skipped} รายการ"
-                desc_en = f"No new transactions — {skipped} duplicates skipped"
-                title = {"th": "ไม่มีรายการใหม่ (LINE)", "en": "No new transactions (LINE)"}
-                kind = "info"
-
-            n = Notification(
-                user_id=user.id,
-                kind=kind,
-                icon="check" if created > 0 else "bell",
-                title=title,
-                desc={"th": desc_th, "en": desc_en},
-                unread=True,
-            )
-            db.add(n)
-            db.commit()
-        finally:
-            db.close()
-
-        # Only push budget alerts when we actually added new spending — if
-        # everything was a duplicate, monthly totals didn't change.
-        if created > 0:
-            try:
-                _push_budget_alerts(user.id)
-            except Exception:
-                log.exception("budget alert after LINE PDF import failed")
-
-        bank_name = {"kbank": "กสิกรไทย", "scb": "ไทยพาณิชย์",
-                     "ktb": "กรุงไทย", "gsb": "ออมสิน"}.get(bank, bank.upper())
-
-        if created > 0:
-            dup_line = f"\nข้ามรายการซ้ำ: {skipped} รายการ" if skipped else ""
-            _reply(
-                reply_token,
-                f"✅ นำเข้าสำเร็จครับ!\n"
-                f"ธนาคาร: {bank_name}\n"
-                f"จำนวน: {created} รายการ"
-                f"{dup_line}\n\n"
-                f"━━━━━━━━━━━━━━━\n"
-                f"ลองพิมพ์ดูครับ:\n"
-                f"  📊 \"สรุป\" — ดูยอดรับ-จ่าย\n"
-                f"  📂 \"เดือนนี้\" — แยกหมวดหมู่\n"
-                f"  🔍 \"วิเคราะห์\" — คำแนะนำประหยัด",
-                user_id=line_user_id,
-            )
-        else:
-            _reply(
-                reply_token,
-                f"ℹ️ ไฟล์นี้เคยนำเข้าแล้วครับ\n"
-                f"ธนาคาร: {bank_name}\n"
-                f"ข้ามรายการซ้ำทั้งหมด: {skipped} รายการ\n\n"
-                f"ลองพิมพ์ \"สรุป\" เพื่อดูยอดเดิมได้เลย",
-                user_id=line_user_id,
-            )
+        _ingest_parsed_pdf(reply_token, line_user_id, user, bank, txs)
 
     except Exception as exc:
         log.exception("PDF parse failed for LINE user %s", user.id)
@@ -729,6 +962,16 @@ def on_text(event: MessageEvent):
     line_user_id = event.source.user_id
     raw_text = event.message.text.strip()
     text = raw_text.lower()
+
+    # ── Pending-PDF state machine ────────────────────────────────────────
+    # If the user previously uploaded an encrypted PDF we are now waiting
+    # for the password as their next text message. This MUST run before
+    # the email-link / command branches so a password that happens to look
+    # like an email (or a command keyword) isn't routed elsewhere.
+    #
+    # PII rule: ``raw_text`` is treated as the password and NEVER logged.
+    if _try_handle_pending_pdf(event.reply_token, line_user_id, raw_text):
+        return
 
     # Account linking: "เชื่อม <email>" / "link <email>" / a bare email.
     # Handled before commands so an email message never falls through to the

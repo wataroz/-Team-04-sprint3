@@ -18,6 +18,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     JSON,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -212,6 +213,37 @@ class MerchantOverride(Base):
             "category": self.category,
             "created_at": self.created_at.isoformat(),
         }
+
+
+class LinePendingPdf(Base):
+    """Encrypted PDF buffered while waiting for the user's password via chat.
+
+    The LINE bot can't ask for input mid-handler the way the web flow can.
+    When a user uploads a password-protected PDF, we stash the raw bytes
+    here keyed by their LINE userId, reply asking for the password, and
+    treat their next text message as the password.
+
+    Lifecycle / safety rules (enforced in ``backend.line_bot``):
+      * Single slot per LINE user — ``line_user_id`` is unique. Uploading a
+        new locked PDF replaces (delete-then-insert) any previous pending
+        row so abandoned uploads never block a fresh attempt.
+      * TTL = 5 minutes from ``created_at`` (checked in ``_get_pending_pdf``).
+        Expired rows are deleted on next access; no cron needed.
+      * ``attempts`` is bumped on each wrong password and the row is deleted
+        after 3 failures to discourage brute force.
+      * Row is also deleted on successful unlock and on explicit cancel.
+      * The password value itself is **never** persisted or logged — only
+        the wrong-attempt counter is stored.
+    """
+
+    __tablename__ = "line_pending_pdfs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    line_user_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    pdf_bytes: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    filename: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
 
 
 def _humanize_ago(dt: datetime) -> dict:
