@@ -21,16 +21,92 @@ from typing import Iterable
 
 import pdfplumber
 
+try:
+    from pdfminer.pdfdocument import PDFPasswordIncorrect
+except ImportError:
+    # pdfminer.six may rename/move this class in future versions.
+    # Fall back to a private sentinel class so `isinstance()` checks below
+    # never crash; password-error detection then degrades to the message
+    # sniffing layer inside `_is_password_error()`.
+    class PDFPasswordIncorrect(Exception):  # type: ignore[no-redef]
+        """Fallback sentinel — real class missing from this pdfminer version."""
+
 
 log = logging.getLogger(__name__)
 
 
+# Substrings (lowercase) used to detect password errors when the real
+# pdfminer class is unavailable or wrapped in a generic exception.
+# Each tuple = AND-group; any tuple matching → password error.
+_PASSWORD_ERROR_PATTERNS: tuple[tuple[str, ...], ...] = (
+    ("pdfpasswordincorrect",),
+    ("password", "incorrect"),
+    ("password", "invalid"),
+    ("password", "wrong"),
+    ("password", "required"),
+)
+
+
+def _is_password_error(exc: BaseException) -> bool:
+    """True if ``exc`` (or any wrapped cause/arg) signals a PDF password error.
+
+    Detection layers (in order):
+        1. ``isinstance(exc, PDFPasswordIncorrect)``
+        2. ``__cause__`` chain
+        3. ``exc.args`` scan for wrapped instances
+        4. **String sniff** — last-resort message inspection, robust against
+           pdfminer renaming/moving the class in future versions.
+
+    pdfplumber 0.11.x wraps pdfminer's PDFPasswordIncorrect in its own
+    ``PdfminerException`` and stores the original as the first positional
+    arg (not ``__cause__``), so we sniff both spots.
+    """
+    if isinstance(exc, PDFPasswordIncorrect):
+        return True
+    if exc.__cause__ and isinstance(exc.__cause__, PDFPasswordIncorrect):
+        return True
+    for a in getattr(exc, "args", ()) or ():
+        if isinstance(a, PDFPasswordIncorrect):
+            return True
+    # Layer 4: degrade gracefully — sniff the exception class name + message.
+    # Never logs or reads the password value itself; only the exception text.
+    try:
+        haystack = (type(exc).__name__ + " " + str(exc)).lower()
+    except Exception:
+        return False
+    for group in _PASSWORD_ERROR_PATTERNS:
+        if all(token in haystack for token in group):
+            return True
+    return False
+
+
 # ─── Text extraction ────────────────────────────────────────────────────────
 
-def extract_pdf_text(file_bytes: bytes) -> str:
-    """Extract text from PDF, line-grouped by Y coordinate (matches pdf.js layout)."""
+def extract_pdf_text(file_bytes: bytes, password: str | None = None) -> str:
+    """Extract text from PDF, line-grouped by Y coordinate (matches pdf.js layout).
+
+    Supports password-protected PDFs via the ``password`` parameter, which is
+    forwarded to ``pdfplumber.open``. The password value is never logged.
+
+    Raises:
+        ValueError: ``"PDF นี้ติดรหัส — กรุณาใส่รหัส"`` if the PDF is encrypted
+            but no password was supplied; ``"รหัส PDF ไม่ถูกต้อง"`` if the
+            supplied password does not unlock the PDF.
+    """
     out: list[str] = []
-    with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+    try:
+        pdf_ctx = pdfplumber.open(io.BytesIO(file_bytes), password=password or "")
+    except Exception as e:
+        # pdfminer raises PDFPasswordIncorrect for both the "encrypted but no
+        # password supplied" and the "wrong password" cases. Distinguish via
+        # the caller-supplied ``password`` arg so the user message is useful.
+        if _is_password_error(e):
+            if not password:
+                raise ValueError("PDF นี้ติดรหัส — กรุณาใส่รหัส")
+            raise ValueError("รหัส PDF ไม่ถูกต้อง")
+        raise
+
+    with pdf_ctx as pdf:
         # Guard: กัน worker timeout/OOM จาก PDF เล่มยักษ์
         if len(pdf.pages) > 50:
             raise ValueError("PDF เกิน 50 หน้า — กรุณาแยกไฟล์")
@@ -880,9 +956,17 @@ def parse_scb(raw: str) -> list[dict]:
 
 # ─── Public API ─────────────────────────────────────────────────────────────
 
-def parse_statement(file_bytes: bytes) -> tuple[str, list[dict]]:
-    """Parse a bank statement PDF. Returns (bank_id, transactions)."""
-    text = extract_pdf_text(file_bytes)
+def parse_statement(
+    file_bytes: bytes,
+    password: str | None = None,
+) -> tuple[str, list[dict]]:
+    """Parse a bank statement PDF. Returns (bank_id, transactions).
+
+    ``password`` is forwarded to ``extract_pdf_text`` for password-protected
+    PDFs and is never logged. See ``extract_pdf_text`` for the ValueError
+    contract on locked / wrong-password PDFs.
+    """
+    text = extract_pdf_text(file_bytes, password=password)
     bank = detect_bank(text)
 
     if bank == "scb":

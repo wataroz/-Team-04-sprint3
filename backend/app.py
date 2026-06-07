@@ -125,14 +125,24 @@ def api_parse_pdf():
     if len(data) > 10 * 1024 * 1024:
         return jsonify({"error": "ไฟล์ใหญ่เกิน 10 MB"}), 413
 
-    log.info("parse-pdf start: size=%d bytes", len(data))
+    # multipart form field — empty string treated as no password.
+    # NEVER log the password value (PII / security).
+    password = request.form.get("password", "") or None
+
+    log.info("parse-pdf start: size=%d bytes has_password=%s",
+             len(data), bool(password))
     t0 = time.perf_counter()
     try:
-        bank, txs = parse_statement(data)
+        bank, txs = parse_statement(data, password=password)
     except ValueError as exc:
-        # Validation guards (page-count, size, format) — แสดง message ภาษาไทยให้ user
-        log.warning("parse-pdf rejected: %s", exc)
-        return jsonify({"error": str(exc)}), 413
+        # ValueError dispatch:
+        #   * password errors  → 400 (credentials wrong, client must fix)
+        #   * size/page guards → 413 (payload too large)
+        msg = str(exc)
+        log.warning("parse-pdf rejected: %s", msg)
+        if msg.startswith("PDF นี้ติดรหัส") or msg.startswith("รหัส PDF ไม่ถูกต้อง"):
+            return jsonify({"error": msg}), 400
+        return jsonify({"error": msg}), 413
     except Exception as exc:
         log.exception("parse_statement failed")
         return jsonify({"error": f"parse failed: {exc}"}), 500

@@ -1264,7 +1264,13 @@ function Upload({ state, addTxs, setPendingImport, lastImport, deleteLastImport 
   const [importResult, setImportResult] = useState(null);
   const [undoing, setUndoing] = useState(false);
   const [undoMessage, setUndoMessage] = useState(''); // post-undo toast text
+  // PDF password — for encrypted bank statements. Kept in React state only
+  // (NEVER persisted to localStorage/sessionStorage). Cleared after a
+  // successful import and on Reset.
+  const [pdfPassword, setPdfPassword] = useState('');
+  const [pwError, setPwError] = useState(false); // true when backend says password is wrong/missing
   const fileRef = useRef(null);
+  const pwInputRef = useRef(null);
 
   const steps = [I18N.parse_step_1, I18N.parse_step_2, I18N.parse_step_3, I18N.parse_step_4];
 
@@ -1300,6 +1306,7 @@ function Upload({ state, addTxs, setPendingImport, lastImport, deleteLastImport 
   const handleFile = async (file) => {
     if (!file) return;
     setFileError('');
+    setPwError(false);
     setFileName(file.name);
     console.log('[Upload] received file', file.name, file.type, file.size);
 
@@ -1327,10 +1334,25 @@ function Upload({ state, addTxs, setPendingImport, lastImport, deleteLastImport 
         // Step 2 — backend parses PDF and returns transactions
         const fd = new FormData();
         fd.append('file', file);
+        // Always send the password field (empty string is fine — backend handles it).
+        // Bank PDFs are often encrypted; user fills the field below the dropzone.
+        fd.append('password', pdfPassword);
         const res = await fetch('/api/parse-pdf', { method: 'POST', body: fd });
         if (!res.ok) {
           const errPayload = await res.json().catch(() => ({}));
-          throw new Error(errPayload.error || ('HTTP ' + res.status));
+          const errMsg = errPayload.error || ('HTTP ' + res.status);
+          // Password-related error → highlight the password field + focus it,
+          // instead of just showing a generic file error.
+          if (res.status === 400 && /ติดรหัส|รหัส|password|encrypted/i.test(errMsg)) {
+            setStage('idle');
+            setActiveStep(0);
+            setFileError(errMsg);
+            setPwError(true);
+            // Defer focus so the input is mounted/visible.
+            setTimeout(() => pwInputRef.current?.focus(), 0);
+            return;
+          }
+          throw new Error(errMsg);
         }
         const payload = await res.json();
         const parsed = payload.transactions || [];
@@ -1455,6 +1477,9 @@ function Upload({ state, addTxs, setPendingImport, lastImport, deleteLastImport 
     // Wait for backend so we can show the real created/skipped numbers.
     const result = await addTxs(preview);
     setImportResult(result || { created: preview.length, skipped: 0 });
+    // PDF password is no longer needed once the file has been parsed — drop it.
+    setPdfPassword('');
+    setPwError(false);
     // Stage stays at 'done' until the user clicks "ทำต่อ / Done" or Undo.
     // (Previously auto-reset after 2.2s — but now we need the Undo button
     // to stay visible long enough for the user to actually use it.)
@@ -1468,6 +1493,8 @@ function Upload({ state, addTxs, setPendingImport, lastImport, deleteLastImport 
     setFileError('');
     setImportResult(null);
     setUndoMessage('');
+    setPdfPassword('');
+    setPwError(false);
   };
 
   const handleUndo = async () => {
@@ -1529,8 +1556,29 @@ function Upload({ state, addTxs, setPendingImport, lastImport, deleteLastImport 
           accept=".csv,.pdf,text/csv,application/pdf"
           onChange={handlePick}
           style={{ display: 'none' }} />
-        
+
       </div>
+
+      {/* PDF password — kept always-visible so users can fill it BEFORE
+          dragging an encrypted file. Empty string is fine for unencrypted PDFs. */}
+      {stage === 'idle' &&
+      <div className="field" style={{ maxWidth: 520, margin: '18px auto 0' }}>
+        <label className="field-label" htmlFor="pdf-password">{t(I18N.upload_password_label, lang)}</label>
+        <input
+          ref={pwInputRef}
+          id="pdf-password"
+          type="password"
+          autoComplete="off"
+          className="field-input"
+          placeholder={t(I18N.upload_password_placeholder, lang)}
+          value={pdfPassword}
+          onChange={(e) => { setPdfPassword(e.target.value); if (pwError) setPwError(false); }}
+          style={pwError ? { borderColor: 'var(--negative)' } : undefined} />
+        <span style={{ fontSize: 11.5, color: 'var(--ink-subtle)', lineHeight: 1.5, marginTop: 2 }}>
+          {t(I18N.upload_password_hint, lang)}
+        </span>
+      </div>
+      }
 
       {fileError &&
       <div style={{ marginTop: 16, padding: '12px 16px', background: 'var(--negative-soft)', border: '1px solid rgba(216,138,138,0.3)', color: 'var(--negative)', borderRadius: 12, fontSize: 13 }}>
