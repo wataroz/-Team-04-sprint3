@@ -759,8 +759,21 @@ def _try_handle_pending_pdf(
         # Success — password was correct and the parser returned rows.
         _delete_pending_pdf(db, line_user_id)
         db.commit()
+        log.info(
+            "line PDF unlocked OK (line_user_id=%s, bank=%s, tx_count=%d)",
+            line_user_id, bank, len(txs),
+        )
     finally:
         db.close()
+
+    # Acknowledge the successful unlock immediately (consumes the reply
+    # token). The ingest summary that follows goes through _push so we
+    # don't double-use the token. This mirrors the ``on_file`` contract.
+    _reply(
+        reply_token,
+        "🔓 ปลดรหัสสำเร็จ กำลังประมวลผลรายการ...",
+        user_id=line_user_id,
+    )
 
     # Ingest happens outside the pending-state session so it can manage
     # its own DB session (mirrors how _handle_pdf calls _ingest_parsed_pdf).
@@ -784,12 +797,18 @@ def _ingest_parsed_pdf(
     Extracted from ``_handle_pdf`` so both the normal upload path and the
     "unlocked after password retry" path can share the exact same dedup +
     notification + budget-alert + reply pipeline.
+
+    NOTE on reply vs push: callers from ``on_file`` and
+    ``_try_handle_pending_pdf`` have already consumed ``reply_token`` for
+    their "received / processing" ack. Reply tokens are single-use, so
+    every outbound message from here uses ``_push`` instead — keyed by
+    ``line_user_id``. Push also avoids the cold-start race where the reply
+    token would expire while the parser is running.
     """
     if not txs:
-        _reply(
-            reply_token,
+        _push(
+            line_user_id,
             "ไม่พบรายการในไฟล์ PDF นี้ครับ\nลองส่งไฟล์ statement จากธนาคารอีกครั้งนะครับ",
-            user_id=line_user_id,
         )
         return
 
@@ -865,8 +884,8 @@ def _ingest_parsed_pdf(
 
     if created > 0:
         dup_line = f"\nข้ามรายการซ้ำ: {skipped} รายการ" if skipped else ""
-        _reply(
-            reply_token,
+        _push(
+            line_user_id,
             f"✅ นำเข้าสำเร็จครับ!\n"
             f"ธนาคาร: {bank_name}\n"
             f"จำนวน: {created} รายการ"
@@ -876,21 +895,34 @@ def _ingest_parsed_pdf(
             f"  📊 \"สรุป\" — ดูยอดรับ-จ่าย\n"
             f"  📂 \"เดือนนี้\" — แยกหมวดหมู่\n"
             f"  🔍 \"วิเคราะห์\" — คำแนะนำประหยัด",
-            user_id=line_user_id,
         )
     else:
-        _reply(
-            reply_token,
+        _push(
+            line_user_id,
             f"ℹ️ ไฟล์นี้เคยนำเข้าแล้วครับ\n"
             f"ธนาคาร: {bank_name}\n"
             f"ข้ามรายการซ้ำทั้งหมด: {skipped} รายการ\n\n"
             f"ลองพิมพ์ \"สรุป\" เพื่อดูยอดเดิมได้เลย",
-            user_id=line_user_id,
         )
 
 
 def _handle_pdf(reply_token: str, message_id: str, user: User,
                 line_user_id: str | None = None) -> None:
+    """Download and parse a PDF that arrived via LINE.
+
+    IMPORTANT — reply_token usage:
+      The caller (``on_file``) has ALREADY used ``reply_token`` to send the
+      "received, processing" ack. Reply tokens are single-use, so every
+      message we send from here on MUST use ``_push`` (no token needed).
+      We still accept ``reply_token`` for backward compat / future routes
+      that haven't consumed it yet, but the live LINE path goes through
+      push only — which also avoids the cold-start "token expired" race
+      that the user reported as "bot ขอ PDF ซ้ำ".
+    """
+    log.info(
+        "line _handle_pdf start (user_id=%s, line_user_id=%s, message_id=%s)",
+        user.id, line_user_id, message_id,
+    )
     try:
         blob_content = _blob_api().get_message_content(message_id=message_id)
         # blob_content is bytes-like
@@ -898,6 +930,31 @@ def _handle_pdf(reply_token: str, message_id: str, user: User,
             pdf_bytes = blob_content.read()
         else:
             pdf_bytes = bytes(blob_content)
+        log.info(
+            "line PDF downloaded (line_user_id=%s, size=%d bytes)",
+            line_user_id, len(pdf_bytes),
+        )
+
+        # If this user has an OLD pending encrypted PDF row from a previous
+        # upload attempt, clear it now — otherwise the next text they type
+        # would be consumed as the password for that stale row. (Sprint 4
+        # bug: user uploads locked PDF → forgets → uploads a new normal PDF
+        # → types "สรุป" → bot tries to parse stale PDF as if "สรุป" were
+        # the password.) Latest upload wins.
+        if line_user_id:
+            db = SessionLocal()
+            try:
+                cleared = db.query(LinePendingPdf).filter_by(
+                    line_user_id=line_user_id
+                ).delete(synchronize_session=False)
+                if cleared:
+                    log.info(
+                        "line cleared stale pending PDF row before new upload (line_user_id=%s)",
+                        line_user_id,
+                    )
+                db.commit()
+            finally:
+                db.close()
 
         try:
             bank, txs = parse_statement(pdf_bytes)
@@ -908,12 +965,13 @@ def _handle_pdf(reply_token: str, message_id: str, user: User,
             # as the password (see ``on_text``). We never log the password.
             if msg.startswith("PDF นี้ติดรหัส"):
                 if not line_user_id:
-                    # Without a LINE userId we can't key the pending row, so
-                    # we can only tell the user we can't help with this PDF.
-                    _reply(
-                        reply_token,
-                        "PDF นี้ติดรหัส 🔒 แต่ระบบไม่สามารถระบุผู้ใช้ LINE ได้\nกรุณาลองอัปโหลดผ่านเว็บแทนครับ",
-                        user_id=line_user_id,
+                    # Without a LINE userId we can't key the pending row AND
+                    # we can't send any message back: reply_token was already
+                    # consumed by on_file's ack, and _push needs a line_user_id.
+                    # In practice LINE always provides a userId, so this is a
+                    # defensive log-only branch.
+                    log.warning(
+                        "encrypted PDF received but no line_user_id available — cannot ask for password"
                     )
                     return
                 db = SessionLocal()
@@ -922,24 +980,36 @@ def _handle_pdf(reply_token: str, message_id: str, user: User,
                     db.commit()
                 finally:
                     db.close()
-                _reply(
-                    reply_token,
+                log.info(
+                    "line stashed encrypted PDF, awaiting password (line_user_id=%s)",
+                    line_user_id,
+                )
+                _push(
+                    line_user_id,
                     "PDF นี้ติดรหัส 🔒\n"
                     "กรุณาส่งรหัสในข้อความถัดไป (ภายใน 5 นาที)\n"
                     "ระบบไม่เก็บรหัส ใช้แค่ครั้งเดียวเพื่อปลด\n\n"
                     "พิมพ์ \"ยกเลิก\" เพื่อยกเลิกการอัปโหลด",
-                    user_id=line_user_id,
                 )
                 return
             # Any other parse ValueError → bubble to the outer handler below
             # which already replies with a generic "can't read file" message.
             raise
 
+        log.info(
+            "line PDF parsed OK (line_user_id=%s, bank=%s, tx_count=%d)",
+            line_user_id, bank, len(txs),
+        )
+        # reply_token has already been consumed by the "received" ack in
+        # ``on_file``; ``_ingest_parsed_pdf`` sends the summary via push.
         _ingest_parsed_pdf(reply_token, line_user_id, user, bank, txs)
 
     except Exception as exc:
         log.exception("PDF parse failed for LINE user %s", user.id)
-        _reply(reply_token, f"❌ ไม่สามารถอ่านไฟล์ได้ครับ: {exc}\nลองส่งไฟล์ PDF จากธนาคารที่รองรับใหม่นะครับ", user_id=line_user_id)
+        _push(
+            line_user_id,
+            f"❌ ไม่สามารถอ่านไฟล์ได้ครับ: {exc}\nลองส่งไฟล์ PDF จากธนาคารที่รองรับใหม่นะครับ",
+        )
 
 
 # ─── LINE SDK event handlers ───────────────────────────────────────────────
@@ -1015,7 +1085,19 @@ def on_text(event: MessageEvent):
 
 @handler.add(MessageEvent, message=FileMessageContent)
 def on_file(event: MessageEvent):
-    """User sends a file — try to parse as PDF bank statement."""
+    """User sends a file — try to parse as PDF bank statement.
+
+    Flow contract (Sprint 4 fix):
+      1. Reply token is consumed exactly once with the "received, processing"
+         ack. This makes the user immediately see that the bot got their
+         file, which prevents the "bot ขอ PDF ซ้ำ" UX bug where users
+         re-sent the file thinking the bot was silent.
+      2. Every subsequent message (parse success summary, password prompt,
+         parse error) is sent via ``_push`` — reply tokens are single-use
+         and would otherwise fail on the second call, falling through to
+         the same push fallback anyway. Going push-directly is more
+         deterministic and avoids the cold-start expiry race.
+    """
     file_msg: FileMessageContent = event.message
     line_user_id = event.source.user_id
 
@@ -1023,6 +1105,11 @@ def on_file(event: MessageEvent):
     user = _get_or_create_user(line_user_id, "")
 
     filename = getattr(file_msg, "file_name", "") or ""
+    log.info(
+        "line on_file received (line_user_id=%s, filename=%s, message_id=%s)",
+        line_user_id, filename, file_msg.id,
+    )
+
     if not filename.lower().endswith(".pdf"):
         _reply(
             event.reply_token,
@@ -1031,7 +1118,15 @@ def on_file(event: MessageEvent):
         )
         return
 
-    _reply(event.reply_token, "⏳ กำลังอ่านข้อมูลครับ...", user_id=line_user_id)
+    # Use the reply token to acknowledge receipt immediately. This is the
+    # ONLY reply_token call for this event — everything from _handle_pdf
+    # onward goes through _push to avoid the single-use-token trap.
+    _reply(
+        event.reply_token,
+        "📄 ได้รับไฟล์แล้ว กำลังประมวลผล...\n"
+        "(ใช้เวลาประมาณ 10-30 วินาที กรุณารอสักครู่นะครับ)",
+        user_id=line_user_id,
+    )
     _handle_pdf(event.reply_token, file_msg.id, user, line_user_id=line_user_id)
 
 
