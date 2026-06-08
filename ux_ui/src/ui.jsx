@@ -158,10 +158,23 @@ function Donut({ slices, size = 220, thickness = 22, totalLabel, totalValue }) {
   useEffect(() => {const t = setTimeout(() => setDraw(true), 60);return () => clearTimeout(t);}, []);
 
   return (
-    <svg viewBox={`0 0 ${size} ${size}`} width={size} height={size} style={{ overflow: 'visible' }}>
+    <svg
+      viewBox={`0 0 ${size} ${size}`}
+      preserveAspectRatio="xMidYMid meet"
+      style={{
+        overflow: 'visible',
+        width: '100%',
+        height: 'auto',
+        maxWidth: size,
+        display: 'block',
+        aspectRatio: '1 / 1'
+      }}>
       {/* Track */}
       <circle cx={cx} cy={cy} r={r} fill="none" stroke="var(--surface-strong)" strokeWidth={thickness} />
-      {/* Arcs */}
+      {/* Arcs — use SVG `transform` attribute (user-space coords) instead of
+          CSS transform with transformOrigin:'center' which resolved to the
+          viewport center on some mobile browsers and caused arcs to start
+          at slightly different angles (gap at the seam). */}
       {arcs.map((a, i) =>
       <circle
         key={i}
@@ -174,9 +187,8 @@ function Donut({ slices, size = 220, thickness = 22, totalLabel, totalValue }) {
         strokeDasharray={`${draw ? a.len : 0} ${circ}`}
         strokeDashoffset={a.offset}
         strokeLinecap="butt"
+        transform={`rotate(-90 ${cx} ${cy})`}
         style={{
-          transform: 'rotate(-90deg)',
-          transformOrigin: 'center',
           transition: `stroke-dasharray 1.1s cubic-bezier(0.2, 0.8, 0.2, 1) ${i * 80}ms`
         }} />
 
@@ -197,18 +209,45 @@ function Donut({ slices, size = 220, thickness = 22, totalLabel, totalValue }) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Bar chart for trend (line + area, like sparkline but bigger)
+// Area chart for trend (line + area + axes + tooltip + touch)
 // ─────────────────────────────────────────────────────────────
+// Format a baht value into a short axis label: 1234 -> "1.2K", 12000 -> "12K"
+function fmtAxisShort(v) {
+  if (v >= 1_000_000) return (v / 1_000_000).toFixed(v >= 10_000_000 ? 0 : 1).replace(/\.0$/, '') + 'M';
+  if (v >= 1_000) return (v / 1_000).toFixed(v >= 10_000 ? 0 : 1).replace(/\.0$/, '') + 'K';
+  return String(Math.round(v));
+}
+
+// Round a max value up to a "nice" number so y-axis ticks read cleanly
+function niceCeil(v) {
+  if (v <= 0) return 1;
+  const pow = Math.pow(10, Math.floor(Math.log10(v)));
+  const n = v / pow;
+  let nice;
+  if (n <= 1) nice = 1;else
+  if (n <= 2) nice = 2;else
+  if (n <= 2.5) nice = 2.5;else
+  if (n <= 5) nice = 5;else
+  nice = 10;
+  return nice * pow;
+}
+
 function AreaChart({ series, height = 280, labels, tooltipLabel }) {
   const W = 1000,H = height;
-  const padX = 16,padTop = 24,padBottom = 28;
+  // Wider left padding leaves room for the HTML-overlay Y-axis labels
+  const padL = 44,padR = 16,padTop = 24,padBottom = 32;
   const innerH = H - padTop - padBottom;
-  const innerW = W - padX * 2;
-  const max = Math.max(...series, 1);
-  const stepX = innerW / (series.length - 1);
-  const points = series.map((v, i) => [padX + i * stepX, padTop + innerH - v / max * innerH]);
+  const innerW = W - padL - padR;
+  const rawMax = Math.max(...series, 1);
+  const max = niceCeil(rawMax);
+  const stepX = innerW / Math.max(series.length - 1, 1);
+  const points = series.map((v, i) => [padL + i * stepX, padTop + innerH - v / max * innerH]);
+
+  // Highlight peak point (max value within the series)
+  const peakIdx = series.reduce((acc, v, i) => v > series[acc] ? i : acc, 0);
 
   const path = useMemo(() => {
+    if (!points.length) return '';
     let d = `M${points[0][0]},${points[0][1]}`;
     for (let i = 0; i < points.length - 1; i++) {
       const p0 = points[i - 1] || points[i];
@@ -224,7 +263,7 @@ function AreaChart({ series, height = 280, labels, tooltipLabel }) {
     return d;
   }, [series.join(',')]);
 
-  const area = `${path} L${padX + innerW},${padTop + innerH} L${padX},${padTop + innerH} Z`;
+  const area = `${path} L${padL + innerW},${padTop + innerH} L${padL},${padTop + innerH} Z`;
 
   const [hover, setHover] = useState(null);
 
@@ -241,43 +280,154 @@ function AreaChart({ series, height = 280, labels, tooltipLabel }) {
     });
   }, [path]);
 
-  const handleMove = (e) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const xPct = (e.clientX - rect.left) / rect.width;
+  // Translate a pointer X (clientX) into a series index + hover point
+  const pickHover = (clientX, rect) => {
+    const xPct = (clientX - rect.left) / rect.width;
     const idx = Math.round(xPct * (series.length - 1));
     const i = Math.max(0, Math.min(series.length - 1, idx));
     setHover({ i, x: points[i][0], y: points[i][1], value: series[i] });
   };
 
+  const handleMove = (e) => pickHover(e.clientX, e.currentTarget.getBoundingClientRect());
+  const handleTouch = (e) => {
+    if (!e.touches || !e.touches.length) return;
+    pickHover(e.touches[0].clientX, e.currentTarget.getBoundingClientRect());
+  };
+
+  // Y-axis tick values (top to bottom: max, 75%, 50%, 25%)
+  const yTicks = [1, 0.75, 0.5, 0.25].map((p) => ({ pct: p, value: max * p }));
+
+  // Choose a small subset of x labels to render as HTML so they stay legible
+  // (the SVG's preserveAspectRatio="none" would stretch them weirdly).
+  const xLabelCount = labels ? Math.min(labels.length, 5) : 0;
+  const xLabelIdx = xLabelCount > 0 ?
+  Array.from({ length: xLabelCount }, (_, i) => Math.round(i * (labels.length - 1) / Math.max(xLabelCount - 1, 1))) :
+  [];
+
   return (
     <div style={{ position: 'relative', width: '100%', height }}>
-      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ width: '100%', height }} onMouseMove={handleMove} onMouseLeave={() => setHover(null)}>
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ width: '100%', height, display: 'block' }}
+      onMouseMove={handleMove}
+      onMouseLeave={() => setHover(null)}
+      onTouchStart={handleTouch}
+      onTouchMove={handleTouch}
+      onTouchEnd={() => setHover(null)}>
+
         <defs>
           <linearGradient id="area-grad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.22" />
+            <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.28" />
             <stop offset="100%" stopColor="var(--accent)" stopOpacity="0" />
           </linearGradient>
         </defs>
-        {/* horizontal grid */}
-        {[0.25, 0.5, 0.75].map((g, i) =>
-        <line key={i} x1={padX} x2={padX + innerW} y1={padTop + innerH * g} y2={padTop + innerH * g} stroke="var(--border)" strokeDasharray="2 4" />
+
+        {/* horizontal grid (incl. baseline) */}
+        {[0, 0.25, 0.5, 0.75, 1].map((g, i) =>
+        <line key={i}
+        x1={padL} x2={padL + innerW}
+        y1={padTop + innerH * (1 - g)} y2={padTop + innerH * (1 - g)}
+        stroke="var(--border)"
+        strokeDasharray={g === 0 ? '0' : '2 5'}
+        strokeOpacity={g === 0 ? 0.6 : 1} />
+
         )}
+
+        {/* area + line */}
         <path d={area} fill="url(#area-grad)" />
-        <path ref={pathRef} d={path} fill="none" stroke="var(--accent)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-        {/* Hover indicator */}
-        {hover &&
-        <g>
-            <line x1={hover.x} x2={hover.x} y1={padTop} y2={padTop + innerH} stroke="var(--border-strong)" strokeDasharray="2 3" />
-            <circle cx={hover.x} cy={hover.y} r="6" fill="var(--bg)" stroke="var(--accent)" strokeWidth="2" />
+        <path ref={pathRef} d={path} fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+
+        {/* peak marker (always visible) */}
+        {series.length > 0 && series[peakIdx] > 0 &&
+        <g style={{ pointerEvents: 'none' }}>
+            <circle cx={points[peakIdx][0]} cy={points[peakIdx][1]} r="14" fill="var(--accent)" fillOpacity="0.15" />
+            <circle cx={points[peakIdx][0]} cy={points[peakIdx][1]} r="5" fill="var(--accent)" stroke="var(--bg)" strokeWidth="2" />
           </g>
         }
-        {/* x labels */}
-        {labels && labels.map((l, i) =>
-        <text key={i} x={padX + i * (innerW / (labels.length - 1))} y={H - 8} textAnchor="middle" fill="var(--ink-subtle)" fontSize="10" letterSpacing="1.5" style={{ textTransform: 'uppercase', fontFamily: 'var(--sans)' }}>
-            {l}
-          </text>
-        )}
+
+        {/* hover indicator */}
+        {hover &&
+        <g style={{ pointerEvents: 'none' }}>
+            <line x1={hover.x} x2={hover.x} y1={padTop} y2={padTop + innerH} stroke="var(--accent)" strokeOpacity="0.5" strokeDasharray="2 3" vectorEffect="non-scaling-stroke" />
+            <circle cx={hover.x} cy={hover.y} r="6" fill="var(--bg)" stroke="var(--accent)" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+          </g>
+        }
       </svg>
+
+      {/* ── Y-axis labels (HTML overlay — immune to SVG stretch) ── */}
+      <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+        {yTicks.map((t, i) =>
+        <div key={i}
+        style={{
+          position: 'absolute',
+          left: 0,
+          width: `${padL / W * 100}%`,
+          top: `${(padTop + innerH * (1 - t.pct)) / H * 100}%`,
+          transform: 'translateY(-50%)',
+          paddingRight: 6,
+          textAlign: 'right',
+          fontSize: 10,
+          color: 'var(--ink-subtle)',
+          fontFamily: 'var(--num)',
+          letterSpacing: '0.2px',
+          lineHeight: 1
+        }}>
+
+            {fmtAxisShort(t.value)}
+          </div>
+        )}
+      </div>
+
+      {/* ── X-axis labels (HTML overlay) ── */}
+      {labels && xLabelIdx.length > 0 &&
+      <div style={{ position: 'absolute', left: 0, right: 0, bottom: 6, pointerEvents: 'none' }}>
+          {xLabelIdx.map((idx) => {
+          const xPct = (padL + idx * stepX) / W * 100;
+          const isFirst = idx === 0;
+          const isLast = idx === labels.length - 1;
+          return (
+            <div key={idx}
+            style={{
+              position: 'absolute',
+              left: `${xPct}%`,
+              transform: isFirst ? 'translateX(0)' : isLast ? 'translateX(-100%)' : 'translateX(-50%)',
+              fontSize: 9.5,
+              color: 'var(--ink-subtle)',
+              fontFamily: 'var(--sans)',
+              letterSpacing: '0.8px',
+              textTransform: 'uppercase',
+              whiteSpace: 'nowrap'
+            }}>
+
+                {labels[idx]}
+              </div>);
+
+        })}
+        </div>
+      }
+
+      {/* ── Peak amount label (small floating chip) ── */}
+      {series.length > 0 && series[peakIdx] > 0 && !hover &&
+      <div style={{
+        position: 'absolute',
+        left: `${points[peakIdx][0] / W * 100}%`,
+        top: `${Math.max(points[peakIdx][1] / H * 100 - 12, 0)}%`,
+        transform: 'translate(-50%, -100%)',
+        pointerEvents: 'none',
+        background: 'var(--accent-soft)',
+        border: '1px solid rgba(201, 182, 138, 0.35)',
+        color: 'var(--accent)',
+        padding: '3px 8px',
+        borderRadius: 8,
+        fontSize: 10.5,
+        fontFamily: 'var(--num)',
+        fontWeight: 600,
+        letterSpacing: '0.2px',
+        whiteSpace: 'nowrap'
+      }}>
+          ฿{series[peakIdx].toLocaleString()}
+        </div>
+      }
+
+      {/* ── Hover tooltip ── */}
       {hover &&
       <div style={{
         position: 'absolute',
@@ -292,7 +442,8 @@ function AreaChart({ series, height = 280, labels, tooltipLabel }) {
         fontSize: 11.5,
         color: 'var(--ink)',
         fontFamily: 'var(--num)',
-        whiteSpace: 'nowrap'
+        whiteSpace: 'nowrap',
+        boxShadow: '0 8px 24px rgba(0,0,0,0.4)'
       }}>
           {tooltipLabel ? tooltipLabel(hover.i) : `Day ${hover.i + 1}`} · ฿{hover.value.toLocaleString()}
         </div>
@@ -398,7 +549,7 @@ function ScoreRing({ score, size = 200, thickness = 14 }) {
   const offset = circ - animated / 100 * circ;
   return (
     <div className="score-ring" style={{ width: size, height: size }}>
-      <svg width={size} height={size}>
+      <svg viewBox={`0 0 ${size} ${size}`} width="100%" height="100%" preserveAspectRatio="xMidYMid meet">
         <defs>
           <linearGradient id="score-grad" x1="0" y1="0" x2="1" y2="1">
             <stop offset="0%" stopColor="var(--accent)" />

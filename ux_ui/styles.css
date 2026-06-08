@@ -86,7 +86,10 @@ body::after {
   position: relative;
   z-index: 1;
   display: grid;
-  grid-template-columns: 240px 1fr;
+  /* minmax(0, 1fr) — prevent grid item from expanding to intrinsic content
+     size (default min-width: auto). Fixes horizontal overflow when long
+     merchant names / wide content live inside <main>. */
+  grid-template-columns: 240px minmax(0, 1fr);
   min-height: 100vh;
 }
 
@@ -257,6 +260,10 @@ body::after {
   padding: 36px 56px 80px;
   max-width: 1480px;
   width: 100%;
+  /* Grid item default is min-width: auto (intrinsic content size).
+     Force shrink so long content inside <main> doesn't push the grid
+     track wider than the viewport. Pair with minmax(0, 1fr) on .app. */
+  min-width: 0;
 }
 
 .topbar {
@@ -578,9 +585,12 @@ body::after {
   background: rgba(0, 0, 0, 0.65);
   backdrop-filter: blur(8px);
   z-index: 200;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 24px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   animation: fadeIn 240ms ease-out;
   animation-fill-mode: both;
 }
@@ -1445,6 +1455,9 @@ body::after {
 }
 
 /* ---------- Transactions ---------- */
+/* IMPORTANT: tx-toolbar items must fit in single row on mobile.
+   Search uses flex: 1 1 0 + min-width: 0, buttons use flex-shrink: 0.
+   See mobile media query (≤640px) for compact sizing. Do NOT use flex-wrap. */
 .tx-toolbar {
   display: flex;
   align-items: center;
@@ -2526,7 +2539,9 @@ html, body {
 
   /* App shell: stack sidebar at bottom */
   .app {
-    grid-template-columns: 1fr !important;
+    /* minmax(0, 1fr) prevents the single column from expanding to the
+       intrinsic width of its content (long merchant names, etc.). */
+    grid-template-columns: minmax(0, 1fr) !important;
     grid-template-rows: 1fr auto;
   }
 
@@ -2704,6 +2719,22 @@ html, body {
 
   /* Modals full-width */
   .modal { width: calc(100% - 24px) !important; max-width: 540px; }
+
+  /* Card title: allow heading to shrink + wrap normally (was wrapping
+     1-char-per-line because flex child had no min-width:0, and Thai
+     text has no spaces for natural break points). */
+  .card-title {
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+    row-gap: 6px !important;
+  }
+  .card-title h3 {
+    min-width: 0 !important;
+    flex: 1 1 auto !important;
+    white-space: normal !important;
+    word-break: keep-all;
+    overflow-wrap: anywhere;
+  }
 }
 
 /* ─── MOBILE ONLY (≤ 767px) ──────────────────────────────────── */
@@ -2773,6 +2804,437 @@ html, body {
 @media (min-width: 1025px) {
   .auth-hero { display: flex !important; }
   .auth-shell { grid-template-columns: 1.05fr 1fr; }
+}
+
+/* ============================================================
+   Sprint 4 — Mobile responsive polish (P0 from user testing)
+   Layered on top of the ≤1024 / ≤767 / ≤480 rules above without
+   touching base styles. Tight touch targets, no iOS zoom-on-focus,
+   no horizontal overflow on 375 / 360 viewports.
+   ============================================================ */
+
+/* ─── Sprint 4 mobile polish (≤ 640px portrait phones) ────────── */
+@media (max-width: 640px) {
+
+  /* Topbar — keep greeting + actions readable, prevent line break gap */
+  .topbar {
+    gap: 8px !important;
+    align-items: flex-start !important;
+    margin-bottom: 16px !important;
+  }
+  .topbar-actions { gap: 6px !important; flex-shrink: 0; }
+  .greeting { font-size: clamp(20px, 5.5vw, 26px) !important; line-height: 1.2 !important; }
+
+  /* Touch targets ≥ 44px (WCAG 2.5.5) */
+  .icon-btn {
+    width: 44px !important;
+    height: 44px !important;
+    border-radius: 12px !important;
+  }
+  .icon-btn svg { width: 18px !important; height: 18px !important; }
+
+  /* Upload — shrink dropzone, reduce hero font from inline 44px */
+  .upload-page .section-h {
+    font-size: clamp(24px, 7vw, 32px) !important;
+    line-height: 1.2 !important;
+  }
+  .dropzone {
+    padding: 40px 18px !important;
+    border-radius: var(--radius-lg) !important;
+  }
+  .dropzone h2 { font-size: 20px !important; margin-bottom: 4px !important; }
+  .dropzone p  { font-size: 12.5px !important; line-height: 1.45 !important; }
+  .dropzone-icon {
+    width: 52px !important;
+    height: 52px !important;
+    border-radius: 16px !important;
+    margin: 0 auto 14px !important;
+  }
+
+  /* Upload — password field full-width (inline style had maxWidth 520) */
+  .upload-page .field {
+    max-width: 100% !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+  }
+
+  /* Preview rows already stack via ≤1024 rule — give labels weight */
+  .preview-row > * { width: 100%; }
+  .preview-row > div:last-child {
+    text-align: left !important;
+    font-weight: 600;
+  }
+
+  /* Insights — score-card stacks ring above content (was 200px 1fr) */
+  .score-card {
+    grid-template-columns: 1fr !important;
+    gap: 20px !important;
+    padding: 24px 20px !important;
+    text-align: center;
+  }
+  .score-ring {
+    margin: 0 auto !important;
+    width: 160px !important;
+    height: 160px !important;
+    display: block !important;
+    flex-shrink: 0;
+  }
+  .score-ring svg {
+    width: 160px !important;
+    height: 160px !important;
+    display: block;
+  }
+  .score-ring .score-text { padding: 0 !important; }
+  .score-num    { font-size: 52px !important; }
+  .score-out    { font-size: 10px !important; letter-spacing: 1.5px !important; }
+  .score-rating { font-size: 26px !important; }
+  .score-desc {
+    font-size: 13.5px !important;
+    max-width: 100% !important;
+  }
+
+  /* Transactions toolbar — keep 3 items in a single row on mobile.
+     Strategy: search shrinks (flex: 1 1 0 + min-width: 0),
+     buttons stay compact (flex-shrink: 0) with tighter padding/font. */
+  .tx-toolbar {
+    gap: 8px !important;
+  }
+  .tx-toolbar .search {
+    flex: 1 1 0 !important;
+    min-width: 0;
+    padding: 10px 12px !important;
+  }
+  .tx-toolbar .search input {
+    font-size: 13px !important;
+    min-width: 0 !important;       /* unlock default min-width: auto on <input> — KEY FIX */
+    width: 100% !important;        /* fill shrunk .search wrapper */
+  }
+  .tx-toolbar .filter-anchor > .btn,
+  .tx-toolbar > .btn-primary {
+    padding: 10px 12px !important;
+    font-size: 12px !important;
+    white-space: nowrap;
+    flex-shrink: 0;
+    min-height: 44px;
+  }
+
+  /* Transactions row — tighter columns, hide hover chevron on touch */
+  .tx-row {
+    grid-template-columns: 32px 1fr auto !important;
+    gap: 12px !important;
+    padding: 12px !important;
+  }
+  .tx-row .tx-arrow { display: none !important; }
+  .tx-icon {
+    width: 32px !important;
+    height: 32px !important;
+    border-radius: 9px !important;
+    font-size: 14px !important;
+  }
+  /* Truncate long merchant names on mobile — they can be 40+ chars and
+     would push the grid track wider than the viewport otherwise.
+     min-width: 0 on parent + children allows the 1fr column to shrink. */
+  .tx-row { min-width: 0; }
+  .tx-row > * { min-width: 0; }
+  .tx-merchant {
+    font-size: 14px !important;
+    line-height: 1.25;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tx-meta {
+    font-size: 11px !important;
+    gap: 4px !important;
+    flex-wrap: wrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .tx-amount { font-size: 13.5px !important; }
+
+  /* Modal (Edit Category / Reset / Add Tx) */
+  .modal {
+    border-radius: var(--radius-lg) !important;
+    max-height: calc(100dvh - 24px) !important;
+    max-height: calc(100vh - 24px) !important;
+    display: flex !important;
+    flex-direction: column !important;
+  }
+  .modal-overlay {
+    padding: 12px !important;
+    align-items: flex-start !important;  /* mobile: ติดบน เห็นหัว modal ทันที */
+  }
+  .modal-head { padding: 18px 20px !important; }
+  .modal-head h3 { font-size: 22px !important; }
+  .modal-body {
+    padding: 16px 20px !important;
+    gap: 10px !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch;
+    flex: 1 1 auto;
+  }
+  .modal-body .field { gap: 4px !important; }
+  .modal-body .field-label { font-size: 10px !important; letter-spacing: 1.4px !important; }
+  .modal-body .field-input,
+  .modal-body .field-select { padding: 10px 12px !important; }
+  .modal-foot {
+    padding: 16px 20px 18px !important;
+    flex-wrap: wrap;
+    flex-shrink: 0;
+  }
+  .modal-foot .btn {
+    flex: 1 1 auto;
+    justify-content: center;
+    min-height: 44px;
+  }
+  .field-row {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 10px !important;
+  }
+  .cat-picker {
+    grid-template-columns: repeat(3, 1fr) !important;
+    gap: 5px !important;
+  }
+  .cat-pick {
+    padding: 8px 4px !important;
+    font-size: 10.5px !important;
+    gap: 3px !important;
+    line-height: 1.15;
+    min-height: 48px;
+  }
+  .cat-pick-icon { font-size: 16px !important; }
+
+  /* ChatPanel — trim head, larger close target */
+  .chat-head h3 { font-size: 20px !important; }
+  .chat-head .icon-btn {
+    width: 40px !important;
+    height: 40px !important;
+  }
+
+  /* Auth — relax padding, single-column social, larger heading break */
+  .auth-form-wrap { padding: 32px 20px !important; }
+  .auth-form-head h2 {
+    font-size: clamp(28px, 8vw, 38px) !important;
+    line-height: 1.1 !important;
+  }
+  .auth-social { grid-template-columns: 1fr !important; }
+
+  /* iOS Safari zooms when input font-size < 16px on focus.
+     Extends the ≤480 rule up to 640 + covers all field types. */
+  .field-input,
+  .field-select,
+  .search input,
+  .chat-input input,
+  .auth-form input,
+  input[type="email"],
+  input[type="password"],
+  input[type="text"],
+  input[type="date"],
+  input[type="number"] {
+    font-size: 16px !important;
+  }
+
+  /* Buttons in topbar / btn — ensure min 44px tappable area */
+  .topbar-actions .btn,
+  .topbar-actions .icon-btn,
+  .modal-foot .btn,
+  .upload-page .btn {
+    min-height: 44px;
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+
+  /* ─── Sprint 4 polish — Insights page hierarchy refinement ─── */
+
+  /* Insights — Topbar wrap เต็มความกว้าง (greeting แถวบน, ปุ่มแถวล่างเต็มแถว) */
+  .page-enter > .topbar:has(.btn-accent) { flex-wrap: wrap !important; }
+  .page-enter > .topbar:has(.btn-accent) > div:first-child { width: 100% !important; }
+  .page-enter > .topbar .topbar-actions {
+    width: 100% !important;
+    margin-top: 14px !important;
+  }
+  .page-enter > .topbar .topbar-actions .btn {
+    flex: 1 1 0 !important;
+    justify-content: center !important;
+    min-height: 44px !important;
+  }
+
+  /* Score card hierarchy — เพิ่มจังหวะหายใจระหว่าง ring / label / rating / desc */
+  .score-card {
+    gap: 24px !important;
+    padding: 28px 22px !important;
+  }
+  .score-label {
+    font-size: 10px !important;
+    letter-spacing: 2px !important;
+    margin-bottom: 8px !important;
+  }
+  .score-rating {
+    font-size: 22px !important;
+    line-height: 1.3 !important;
+    margin: 0 0 12px !important;
+  }
+  .score-desc {
+    font-size: 13px !important;
+    line-height: 1.6 !important;
+    color: var(--ink-muted) !important;
+  }
+
+  /* Action zone — แยกออกจาก desc ด้วย divider + จัดเป็นคอลัมน์ */
+  .score-card > div:last-child > div[style*="marginTop"] {
+    margin-top: 20px !important;
+    padding-top: 18px !important;
+    border-top: 1px solid var(--border) !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 10px !important;
+  }
+  .score-card > div:last-child > div[style*="marginTop"] > span:last-child {
+    font-size: 12px !important;
+    line-height: 1.5 !important;
+  }
+
+  /* Insight grid cards — compact spacing + readable body */
+  .insight-grid {
+    gap: 12px !important;
+    margin-top: 18px !important;
+  }
+  .insight {
+    padding: 20px 18px !important;
+    gap: 10px !important;
+  }
+  .insight h4 {
+    font-size: 18px !important;
+    line-height: 1.3 !important;
+  }
+  .insight p {
+    font-size: 13px !important;
+    line-height: 1.6 !important;
+  }
+  .insight-stat {
+    font-size: 11.5px !important;
+    padding-top: 10px !important;
+  }
+
+  /* ─── Dashboard Overview — keep 2-col side-by-side on phones ──
+     User explicitly wants both Trend + Donut visible at once
+     without scrolling. Card titles use `text-wrap-fix` so the
+     Thai headings ("สัดส่วน ตามหมวด", "แนวโน้มรายจ่าย · 30 วัน
+     ล่าสุด") no longer break per-char even at narrow widths.
+     Drop to 1-col only on tiny screens (<420px) — see below. */
+  .dash-grid {
+    grid-template-columns: 1.4fr 1fr !important;
+    gap: 12px !important;
+    margin-bottom: 16px !important;
+  }
+  .dash-grid .card { padding: 14px !important; min-width: 0; }
+  .dash-grid .card-title { margin-bottom: 12px !important; }
+  .dash-grid .card-title h3 {
+    font-size: 10.5px !important;
+    letter-spacing: 1px !important;
+    line-height: 1.3 !important;
+  }
+  .dash-grid .card-title .more { font-size: 10px !important; }
+  .chart-frame {
+    height: 200px !important;
+  }
+  .chart-tabs { flex-shrink: 0; }
+  .chart-tab {
+    padding: 4px 7px !important;
+    font-size: 10px !important;
+    letter-spacing: 0.4px !important;
+  }
+
+  /* Donut card breathing room — was clipping on the right edge */
+  .cat-row {
+    gap: 10px !important;
+    padding: 10px 0 !important;
+  }
+  .cat-name   { font-size: 13px !important; }
+  .cat-sub    { font-size: 10.5px !important; }
+  .cat-amount { font-size: 12.5px !important; }
+
+  /* ─── Bottom nav — 6 items on a phone need tighter spacing ───
+     Inherited rule from ≤1024 used min-width:64px × 6 = 384px
+     which overflowed 375px viewport. Drop min-width and shrink
+     label so all 6 fit edge-to-edge on iPhone SE / 12 mini. */
+  .sidebar {
+    padding: 6px 2px calc(6px + env(safe-area-inset-bottom)) 2px !important;
+    justify-content: space-between !important;
+    overflow-x: hidden !important;
+  }
+  .nav-item {
+    min-width: 0 !important;
+    max-width: none !important;
+    padding: 6px 2px !important;
+    font-size: 9.5px !important;
+    letter-spacing: 0 !important;
+    gap: 2px !important;
+    flex: 1 1 0 !important;
+  }
+  .nav-item svg { width: 18px !important; height: 18px !important; }
+}
+
+/* ─── Sprint 4 — Small / tiny phones (≤ 480px) ───
+   Updated from 380px → 480px after user feedback: at 375-430px the
+   2-col dash-grid (Trend | Donut) crammed both cards into ~150-180px
+   each — chart axis labels collided with the path, donut shrank below
+   readable size, and the peak-value chip overlapped the curve.
+   On phones ≤480px we now STACK vertically: each card gets full width,
+   chart breathes at 240px height, donut is centered + capped at 260px. */
+@media (max-width: 480px) {
+  .dash-grid {
+    grid-template-columns: 1fr !important;
+    gap: 14px !important;
+  }
+  /* Cards full-width → give chart more breathing room (was 200px from
+     the ≤640 rule which is too short when stacked). */
+  .chart-frame { height: 240px !important; }
+  /* Donut card title + content can use full width — push card title back
+     to default size since we're no longer crammed. */
+  .dash-grid .card { padding: 18px 16px !important; }
+  .dash-grid .card-title h3 {
+    font-size: 12px !important;
+    letter-spacing: 1.2px !important;
+  }
+  /* Donut SVG already handles its own responsive sizing (width:100%,
+     height:auto, aspect-ratio:1/1, max-width:size). No CSS override
+     needed here on small screens — the default size=220 caps the
+     donut nicely centered inside the full-width card. */
+
+  .nav-item {
+    font-size: 9.5px !important;
+    padding: 6px 4px !important;
+    min-width: 0 !important;
+  }
+  .nav-item svg { width: 18px !important; height: 18px !important; }
+  .nav-badge { transform: scale(0.65) !important; }
+
+  .greeting { font-size: 19px !important; }
+  .crumb    { font-size: 9.5px !important; letter-spacing: 1.8px !important; }
+
+  .balance-number { font-size: clamp(32px, 11vw, 48px) !important; }
+  .balance-number .currency { font-size: 22px !important; }
+
+  /* 3-col → 2-col cat picker on the very smallest screens */
+  .cat-picker { grid-template-columns: repeat(2, 1fr) !important; }
+
+  /* Main padding tighter */
+  .main {
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+  }
+
+  /* tx-toolbar ultra-compact: shrink more so 3 items still fit in 1 row */
+  .tx-toolbar { gap: 6px !important; }
+  .tx-toolbar .search { padding: 9px 10px !important; }
+  .tx-toolbar .search input { font-size: 12px !important; }
+  .tx-toolbar .filter-anchor > .btn,
+  .tx-toolbar > .btn-primary {
+    padding: 9px 10px !important;
+    font-size: 11px !important;
+    gap: 4px !important;
+  }
 }
 
 /* ─── ACCESSIBILITY: respect prefers-reduced-motion ──────────── */
