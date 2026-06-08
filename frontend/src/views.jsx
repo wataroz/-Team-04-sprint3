@@ -1852,7 +1852,7 @@ Provide 4-6 items, varied across warn/good/info.\n\nData:\n${summary}\n\nReply w
           <div className="analyzing-orb"></div>
           <div className="analyzing-text">{(lang === 'th' ? messagesTH : messagesEN)[msgIdx]}</div>
           <div style={{ marginTop: 18, color: 'var(--ink-subtle)', fontSize: 12, letterSpacing: 2, textTransform: 'uppercase' }}>
-            Claude Haiku 4.5 · MoneyMind
+            MoneyMind
           </div>
         </div> :
 

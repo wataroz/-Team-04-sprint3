@@ -153,8 +153,8 @@ const I18N = {
   nav: {
     overview:     { th: 'ภาพรวม',           en: 'Overview' },
     transactions: { th: 'ธุรกรรม',           en: 'Transactions' },
-    upload:       { th: 'นำเข้า Statement',   en: 'Import Statement' },
-    budgets:      { th: 'ตั้งงบรายหมวด',      en: 'Category Budgets' },
+    upload:       { th: 'Statement',         en: 'Statement' },
+    budgets:      { th: 'งบหมวด',            en: 'Budgets' },
     insights:     { th: 'AI Insights',       en: 'AI Insights' },
   },
   brand_sub:     { th: 'ผู้ช่วยจัดการการเงิน', en: 'Personal Finance Co-pilot' },
