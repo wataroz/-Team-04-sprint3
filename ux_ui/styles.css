@@ -6,41 +6,56 @@
 @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Manrope:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&display=swap');
 
 :root {
+  /* ============================================================
+     LIGHT (Cream Luxe) — default theme
+     Bg = #F5EFE3 (logo cream), ink = #14141A, accent = gold #D4B978
+     Dark theme = [data-theme="dark"] override block below
+     ============================================================ */
+
   /* Base palette */
-  --bg: #0A0A0B;
-  --bg-deep: #06060708;
-  --surface: rgba(255, 255, 255, 0.025);
-  --surface-hover: rgba(255, 255, 255, 0.045);
-  --surface-strong: rgba(255, 255, 255, 0.06);
-  --border: rgba(255, 255, 255, 0.07);
-  --border-strong: rgba(255, 255, 255, 0.12);
+  --bg: #F5EFE3;
+  --bg-2: #FAF5E8;
+  --bg-deep: #EFE7D5;
+  --surface: #FFFFFF;
+  --surface-2: #FBF6EA;
+  --surface-hover: #FBF6EA;
+  --surface-strong: #FBF6EA;
+  --border: rgba(20, 20, 26, 0.08);
+  --border-strong: rgba(20, 20, 26, 0.15);
 
   /* Type */
-  --ink: #F5F5F7;
-  --ink-muted: rgba(245, 245, 247, 0.6);
-  --ink-subtle: rgba(245, 245, 247, 0.38);
-  --ink-faint: rgba(245, 245, 247, 0.18);
+  --text: #14141A;
+  --ink: var(--text);
+  --ink-muted: #2A2A32;
+  --ink-subtle: #4A4A52;
+  --ink-faint: #8A8A92;
 
-  /* Accent — driven by Tweaks (default: logo v2 gold) */
-  --accent: #D4B978;        /* logo gold (warmer + saturated champagne) */
-  --accent-soft: rgba(212, 185, 120, 0.12);
-  --accent-glow: rgba(212, 185, 120, 0.35);
+  /* Accent — logo v2 gold (shared across themes) */
+  --accent: #D4B978;
+  --accent-soft: rgba(212, 185, 120, 0.18);
+  --accent-glow: rgba(212, 185, 120, 0.30);
 
   /* Logo v2 companion tones */
-  --cream: #F5EFE3;
-  --cream-soft: rgba(245, 239, 227, 0.06);
+  --cream: #FAF5E8;
+  --cream-soft: rgba(20, 20, 26, 0.04);
 
-  --positive: #88D4A4;
-  --positive-soft: rgba(136, 212, 164, 0.1);
-  --negative: #D88A8A;
-  --negative-soft: rgba(216, 138, 138, 0.1);
-  --warn: #E5C07B;
+  --positive: #3A9B66;
+  --positive-soft: rgba(58, 155, 102, 0.12);
+  --negative: #C44545;
+  --negative-soft: rgba(196, 69, 69, 0.10);
+  --warn: #B8842F;
+
+  /* Elevated surfaces (notif / popover / modal) — paper-white on cream */
+  --surface-elev: #FFFFFF;
+  --overlay-scrim: rgba(20, 20, 26, 0.35);
+  --shadow-elev: 0 18px 50px rgba(20, 20, 26, 0.12),
+                 0 2px 8px rgba(20, 20, 26, 0.06);
 
   /* Semantic aliases (Settings page — Sprint 5) */
   --accent-danger: var(--negative);
   --accent-danger-soft: var(--negative-soft);
   --accent-warning: var(--warn);
-  --accent-warning-soft: rgba(229, 192, 123, 0.12);
+  --accent-warning-soft: rgba(184, 132, 47, 0.14);
 
   --radius-sm: 10px;
   --radius: 18px;
@@ -51,6 +66,53 @@
   --serif: 'Instrument Serif', 'IBM Plex Sans Thai', Georgia, serif;
   --mono: 'JetBrains Mono', ui-monospace, monospace;
   --num: 'Inter', 'IBM Plex Sans Thai', system-ui, sans-serif;
+}
+
+/* ============================================================
+   DARK (Luxe Black) — opt-in via <html data-theme="dark">
+   Mirrors the original dark-only palette so existing components
+   keep their AAA contrast and editorial feel.
+   ============================================================ */
+[data-theme="dark"] {
+  --bg: #0A0A0B;
+  --bg-2: #14141A;
+  --bg-deep: #06060708;
+  --surface: rgba(255, 255, 255, 0.025);
+  --surface-2: rgba(255, 255, 255, 0.04);
+  --surface-hover: rgba(255, 255, 255, 0.045);
+  --surface-strong: rgba(255, 255, 255, 0.06);
+  --border: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.12);
+
+  --text: #F5F5F7;
+  --ink: var(--text);
+  --ink-muted: rgba(245, 245, 247, 0.6);
+  --ink-subtle: rgba(245, 245, 247, 0.38);
+  --ink-faint: rgba(245, 245, 247, 0.18);
+
+  --accent-soft: rgba(212, 185, 120, 0.12);
+  --accent-glow: rgba(212, 185, 120, 0.35);
+
+  --cream: #F5EFE3;
+  --cream-soft: rgba(245, 239, 227, 0.06);
+
+  --positive: #88D4A4;
+  --positive-soft: rgba(136, 212, 164, 0.1);
+  --negative: #D88A8A;
+  --negative-soft: rgba(216, 138, 138, 0.1);
+  --warn: #E5C07B;
+
+  --surface-elev: #111114;
+  --overlay-scrim: rgba(0, 0, 0, 0.65);
+  --shadow-elev: 0 30px 80px rgba(0, 0, 0, 0.6),
+                 0 0 0 1px rgba(255, 255, 255, 0.02) inset;
+
+  --accent-warning-soft: rgba(229, 192, 123, 0.12);
+}
+
+/* Smooth theme transitions (skip on prefers-reduced-motion — handled below) */
+html, body {
+  transition: background-color 220ms ease, color 220ms ease;
 }
 
 * { box-sizing: border-box; }
@@ -341,10 +403,10 @@ body::after {
   top: calc(100% + 10px);
   right: 0;
   width: 380px;
-  background: #111114;
+  background: var(--surface-elev);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
-  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255,255,255,0.02) inset;
+  box-shadow: var(--shadow-elev);
   z-index: 90;
   overflow: hidden;
   transform-origin: top right;
@@ -477,10 +539,10 @@ body::after {
   top: calc(100% + 10px);
   right: 0;
   width: 280px;
-  background: #111114;
+  background: var(--surface-elev);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
-  box-shadow: 0 30px 80px rgba(0,0,0,0.6);
+  box-shadow: var(--shadow-elev);
   z-index: 90;
   padding: 18px 20px;
   animation: notifIn 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -582,7 +644,7 @@ body::after {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.65);
+  background: var(--overlay-scrim);
   backdrop-filter: blur(8px);
   z-index: 200;
   display: flex;
@@ -600,10 +662,10 @@ body::after {
 .modal {
   width: 100%;
   max-width: 520px;
-  background: #111114;
+  background: var(--surface-elev);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-xl);
-  box-shadow: 0 40px 120px rgba(0,0,0,0.7);
+  box-shadow: var(--shadow-elev);
   overflow: hidden;
   animation: modalIn 280ms cubic-bezier(0.2, 0.8, 0.2, 1);
   animation-fill-mode: both;
@@ -1086,7 +1148,7 @@ body::after {
 
 .btn-accent {
   background: var(--accent);
-  color: #0A0A0B;
+  color: #14141A;          /* dark ink — readable on gold in both themes */
   border-color: var(--accent);
   font-weight: 600;
 }
@@ -1976,7 +2038,7 @@ body::after {
 .chat-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.55);
+  background: var(--overlay-scrim);
   backdrop-filter: blur(8px);
   z-index: 100;
   opacity: 0;
@@ -1999,7 +2061,7 @@ body::after {
   flex-direction: column;
   transform: translateX(100%);
   transition: transform 400ms cubic-bezier(0.2, 0.8, 0.2, 1);
-  box-shadow: -30px 0 60px rgba(0, 0, 0, 0.6);
+  box-shadow: -30px 0 60px var(--overlay-scrim);
 }
 
 .chat-panel.open { transform: translateX(0); }
@@ -2560,7 +2622,7 @@ html, body {
     padding: 6px 4px calc(6px + env(safe-area-inset-bottom)) 4px !important;
     border-right: none !important;
     border-top: 1px solid var(--border) !important;
-    background: rgba(10, 10, 11, 0.96) !important;
+    background: color-mix(in oklab, var(--bg) 96%, transparent) !important;
     backdrop-filter: blur(14px);
     -webkit-backdrop-filter: blur(14px);
     z-index: 100;
@@ -3303,9 +3365,10 @@ html, body {
 }
 
 .settings-tab.active {
-  background: var(--surface-strong);
+  background: var(--accent-soft);
   color: var(--ink);
-  border-color: var(--border);
+  border-color: var(--accent);
+  font-weight: 600;
 }
 
 .settings-tab.active::before {
@@ -3318,6 +3381,72 @@ html, body {
   height: 18px;
   background: var(--accent);
   border-radius: 2px;
+}
+
+/* Settings back button — top-left of Settings topbar */
+.settings-back-btn {
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--ink-subtle);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background-color 160ms ease, color 160ms ease, border-color 160ms ease;
+  margin-top: 2px;
+}
+.settings-back-btn:hover,
+.settings-back-btn:focus-visible {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+  outline: none;
+}
+.settings-back-btn:active { transform: scale(0.96); }
+
+@media (max-width: 480px) {
+  .settings-back-btn { width: 34px; height: 34px; }
+  .settings-back-btn svg { width: 18px; height: 18px; }
+}
+
+/* Theme picker (light/dark toggle in Settings → Appearance) */
+.theme-picker {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.theme-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 160ms ease, background-color 160ms ease, transform 120ms ease;
+}
+.theme-option:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.theme-option:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.theme-option:active { transform: scale(0.97); }
+.theme-option.active {
+  border: 2px solid var(--accent);
+  background: var(--accent-soft);
+  font-weight: 600;
+  padding: 9px 17px; /* offset border 2px so size stays consistent */
 }
 
 .settings-tab svg {
@@ -3462,7 +3591,7 @@ html, body {
   background: #FFFFFF;
   padding: 8px;
   border-radius: 12px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-elev);
   display: block;
   flex-shrink: 0;
 }
@@ -3617,7 +3746,7 @@ html, body {
 .delete-modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.7);
+  background: var(--overlay-scrim);
   backdrop-filter: blur(10px);
   z-index: 220;
   display: flex;
@@ -3633,10 +3762,10 @@ html, body {
 .delete-modal {
   width: 100%;
   max-width: 480px;
-  background: #111114;
+  background: var(--surface-elev);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-xl);
-  box-shadow: 0 40px 120px rgba(0, 0, 0, 0.75);
+  box-shadow: var(--shadow-elev);
   overflow: hidden;
   animation: modalSlideUp 320ms cubic-bezier(0.2, 0.8, 0.2, 1);
   animation-fill-mode: both;
@@ -3796,7 +3925,7 @@ html, body {
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  background: rgba(0, 0, 0, 0.15);
+  background: var(--cream-soft);
   display: grid;
   place-items: center;
   flex-shrink: 0;
@@ -3888,7 +4017,7 @@ html, body {
   height: 22px;
   background: var(--ink);
   border-radius: 50%;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 2px 6px var(--overlay-scrim);
   transition: transform 240ms cubic-bezier(0.2, 0.8, 0.2, 1),
               background 240ms ease;
 }

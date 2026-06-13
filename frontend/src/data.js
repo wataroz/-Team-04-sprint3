@@ -288,6 +288,12 @@ const I18N = {
   appearance_currency:       { th: 'สกุลเงิน',                                    en: 'Currency' },
   appearance_currency_desc:  { th: 'หน่วยเงินที่แสดงในแอป',                        en: 'Currency unit shown across the app.' },
 
+  // Theme (light/dark) — Sprint 5 toggle, applied via data-theme attr on <html>
+  theme_label:               { th: 'ธีม',                                       en: 'Theme' },
+  theme_desc:                { th: 'เลือกโหมดสีของแอป',                          en: 'Choose app color mode' },
+  theme_light:               { th: 'สว่าง',                                      en: 'Light' },
+  theme_dark:                { th: 'มืด',                                        en: 'Dark' },
+
   // LINE section
   line_section_title:        { th: 'เชื่อมต่อ LINE',                              en: 'Connect to LINE' },
   line_section_sub:          { th: 'รับการแจ้งเตือนและส่ง Statement ผ่าน LINE',   en: 'Get alerts and upload statements via LINE.' },

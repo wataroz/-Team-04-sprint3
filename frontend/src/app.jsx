@@ -34,7 +34,8 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "lang": "th",
   "currency": "THB",
   "density": "regular",
-  "showAmbient": true
+  "showAmbient": true,
+  "theme": "light"
 } /*EDITMODE-END*/;
 
 // Accent presets — fewer colors = more luxe.
@@ -96,6 +97,7 @@ function App() {
         if (p.lang) setTweak('lang', p.lang);
         if (p.currency) setTweak('currency', p.currency);
         if (typeof p.showAmbient === 'boolean') setTweak('showAmbient', p.showAmbient);
+        if (p.theme === 'light' || p.theme === 'dark') setTweak('theme', p.theme);
         if (p.categoryBudgets && Object.keys(p.categoryBudgets).length) {
           setCatBudgets({ ...DEFAULT_CATEGORY_BUDGETS, ...p.categoryBudgets });
         }
@@ -119,7 +121,7 @@ function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [catBudgets, user && user.id]);
 
-  // Persist tweaks (accent/density/lang/currency/showAmbient) to backend, debounced.
+  // Persist tweaks (accent/density/lang/currency/showAmbient/theme) to backend, debounced.
   useEffect(() => {
     if (!user || !user.id) return;
     const t = setTimeout(() => {
@@ -132,12 +134,13 @@ function App() {
           lang: tw.lang,
           currency: tw.currency,
           showAmbient: !!tw.showAmbient,
+          theme: tw.theme || 'light',
         }),
       }).catch(() => {});
     }, 400);
     return () => clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tw.accent, tw.density, tw.lang, tw.currency, tw.showAmbient, user && user.id]);
+  }, [tw.accent, tw.density, tw.lang, tw.currency, tw.showAmbient, tw.theme, user && user.id]);
 
   const updateCatBudget = (cat, val) => {
     setCatBudgets((prev) => ({ ...prev, [cat]: Math.max(0, Math.round(val)) }));
@@ -211,6 +214,16 @@ function App() {
       before.classList.remove('no-ambient');
     }
   }, [tw.showAmbient]);
+
+  // Theme toggle (light/dark) — Sprint 5. Sets data-theme on <html> so BEST's
+  // CSS dual-token sheet can override; also keeps the mobile address-bar
+  // color in sync via <meta name="theme-color">. Default = light (cream luxe).
+  useEffect(() => {
+    const theme = tw.theme === 'dark' ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', theme);
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.content = theme === 'dark' ? '#0a0a0b' : '#F5EFE3';
+  }, [tw.theme]);
 
   const addTxs = async (newTxs) => {
     if (!user || !user.id) {
@@ -662,7 +675,8 @@ function App() {
           setTweak={setTweak}
           onPatchUser={patchUser}
           onOpenDeleteModal={() => setDeleteModalOpen(true)}
-          onSetUser={setUser} />
+          onSetUser={setUser}
+          onBack={() => setView('overview')} />
         }
       </main>
 

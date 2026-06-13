@@ -2300,22 +2300,50 @@ const SETTINGS_ACCENT_OPTIONS = [
   '#E5A55C', // Warm amber
 ];
 
-function SettingsView({ user, lang, tw, setTweak, onPatchUser, onOpenDeleteModal, onSetUser }) {
+function SettingsView({ user, lang, tw, setTweak, onPatchUser, onOpenDeleteModal, onSetUser, onBack }) {
   const [activeTab, setActiveTab] = useState('profile');
+  const contentRef = useRef(null);
+
+  // เมื่อ tap tab → smooth scroll ไปยัง content section
+  // (สำคัญสำหรับ mobile/tablet ที่ sidebar อยู่ด้านบน content อยู่ด้านล่าง — user อาจมองไม่เห็นว่ามีอะไรเปลี่ยน)
+  const handleTabClick = (tabId) => {
+    setActiveTab(tabId);
+    // ใช้ rAF ให้ DOM render section ใหม่ก่อน scroll
+    requestAnimationFrame(() => {
+      if (contentRef.current && window.innerWidth <= 1024) {
+        contentRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    });
+  };
 
   return (
     <div className="page-enter">
       <div className="topbar" style={{ marginBottom: 24 }}>
-        <div>
-          <div className="crumb">{t(I18N.settings_title, lang)}</div>
-          <h1 className="greeting">
-            {lang === 'th' ?
-              <>การ <em style={{ fontFamily: '"Instrument Serif"' }}>ตั้งค่า</em></> :
-              <>Your <em>settings</em></>}
-          </h1>
-          <p style={{ color: 'var(--ink-subtle)', fontSize: 13.5, margin: '6px 0 0' }}>
-            {t(I18N.settings_subtitle, lang)}
-          </p>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flex: 1 }}>
+          {onBack && (
+            <button
+              type="button"
+              className="settings-back-btn"
+              onClick={onBack}
+              aria-label={lang === 'th' ? 'ย้อนกลับ' : 'Back'}
+              title={lang === 'th' ? 'ย้อนกลับ' : 'Back'}>
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="19" y1="12" x2="5" y2="12"/>
+                <polyline points="12 19 5 12 12 5"/>
+              </svg>
+            </button>
+          )}
+          <div>
+            <div className="crumb">{t(I18N.settings_title, lang)}</div>
+            <h1 className="greeting">
+              {lang === 'th' ?
+                <>การ <em style={{ fontFamily: '"Instrument Serif"' }}>ตั้งค่า</em></> :
+                <>Your <em>settings</em></>}
+            </h1>
+            <p style={{ color: 'var(--ink-subtle)', fontSize: 13.5, margin: '6px 0 0' }}>
+              {t(I18N.settings_subtitle, lang)}
+            </p>
+          </div>
         </div>
       </div>
 
@@ -2332,14 +2360,14 @@ function SettingsView({ user, lang, tw, setTweak, onPatchUser, onOpenDeleteModal
               key={tab.id}
               type="button"
               className={`settings-tab ${activeTab === tab.id ? 'active' : ''}`}
-              onClick={() => setActiveTab(tab.id)}>
+              onClick={() => handleTabClick(tab.id)}>
               {tab.icon}
               <span className="settings-tab-text">{tab.label}</span>
             </button>
           ))}
         </aside>
 
-        <main className="settings-content">
+        <main className="settings-content" ref={contentRef}>
           {activeTab === 'profile' &&
             <SettingsProfileSection
               user={user}
@@ -2526,11 +2554,42 @@ function SettingsProfileSection({ user, lang, onPatchUser, onOpenDeleteModal }) 
 // Hooks straight into the tweaks state from app.jsx — every change is
 // live-saved by the existing useEffect there (no extra fetch needed).
 function SettingsAppearanceSection({ lang, tw, setTweak }) {
+  const currentTheme = tw.theme === 'dark' ? 'dark' : 'light';
   return (
     <section className="settings-section">
       <div className="settings-section-head">
         <h2 className="settings-section-title">{t(I18N.appearance_section_title, lang)}</h2>
         <p className="settings-section-sub">{t(I18N.appearance_section_sub, lang)}</p>
+      </div>
+
+      {/* Theme picker (light/dark) */}
+      <div className="settings-card">
+        <div className="settings-card-header">
+          <div>
+            <h3 className="settings-card-title">{t(I18N.theme_label, lang)}</h3>
+            <p className="settings-card-desc">{t(I18N.theme_desc, lang)}</p>
+          </div>
+        </div>
+        <div className="settings-card-body">
+          <div className="theme-picker">
+            <button
+              type="button"
+              className={'theme-option' + (currentTheme === 'light' ? ' active' : '')}
+              onClick={() => setTweak('theme', 'light')}
+              aria-pressed={currentTheme === 'light'}>
+              <span aria-hidden="true">{'☀️'}</span>
+              {t(I18N.theme_light, lang)}
+            </button>
+            <button
+              type="button"
+              className={'theme-option' + (currentTheme === 'dark' ? ' active' : '')}
+              onClick={() => setTweak('theme', 'dark')}
+              aria-pressed={currentTheme === 'dark'}>
+              <span aria-hidden="true">{'\u{1F319}'}</span>
+              {t(I18N.theme_dark, lang)}
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Accent color swatches */}
