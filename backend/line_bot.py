@@ -54,6 +54,7 @@ from backend.models import (
     Import,
     LinePendingPdf,
     LineUser,
+    MerchantOverride,
     Notification,
     Preference,
     Transaction,
@@ -330,6 +331,11 @@ def _link_account(line_user_id: str, email: str) -> str:
             # Clean up the orphaned auto-user (and its preference) so it doesn't
             # linger. Only the throwaway LINE-local account is ever deleted here.
             db.query(Preference).filter_by(user_id=old_user_id).delete(
+                synchronize_session=False
+            )
+            # Sprint 5 — clear merchant overrides ของ auto-user ก่อน delete
+            # (กัน FK violation ถ้าวันหน้าเพิ่ม LINE edit-category UI)
+            db.query(MerchantOverride).filter_by(user_id=old_user_id).delete(
                 synchronize_session=False
             )
             db.delete(old_user)

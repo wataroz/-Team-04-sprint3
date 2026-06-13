@@ -1,37 +1,52 @@
 """MoneyMind Flask backend.
 
 Routes:
-    GET  /                       - serve the React-via-Babel SPA (frontend/index.html)
-    GET  /fe/<path>              - serve frontend assets (src/*.jsx, src/*.js)
-    GET  /ui/<path>              - serve UX/UI assets (styles.css, src/ui.jsx, ...)
-    POST /api/parse-pdf          - parse a bank statement PDF, return transactions
-    POST /api/auth/login         - upsert user by email, return user record
-    GET  /api/transactions       - list a user's transactions
-    POST /api/transactions       - bulk-create transactions
-    POST /api/imports            - create an import record
-    GET  /api/imports            - list a user's imports
-    GET  /api/notifications      - list a user's notifications
-    POST /api/notifications      - create a notification
-    POST /api/notifications/mark-read - mark notifications as read
-    GET  /api/preferences/<uid>  - get a user's preferences
-    PUT  /api/preferences/<uid>  - update a user's preferences
-    POST /api/reset              - wipe a user's txs/imports/notifications
-    GET  /api/health             - liveness check
+    GET    /                              - serve the React-via-Babel SPA (frontend/index.html)
+    GET    /fe/<path>                     - serve frontend assets (src/*.jsx, src/*.js)
+    GET    /ui/<path>                     - serve UX/UI assets (styles.css, src/ui.jsx, ...)
+    POST   /api/parse-pdf                 - parse a bank statement PDF, return transactions
+    POST   /api/auth/login                - upsert user by email, return user record
+    GET    /api/users/<id>                - get user profile + grace-period status (Sprint 5)
+    PATCH  /api/users/<id>                - update name / display_name (Sprint 5)
+    DELETE /api/users/<id>                - schedule 30-day grace hard-delete (Sprint 5)
+    POST   /api/users/<id>/cancel-delete  - abort a scheduled hard-delete (Sprint 5)
+    GET    /api/users/<id>/export-csv     - download all txs as CSV (Sprint 5)
+    GET    /api/line/status               - is the web user linked to a LINE account? (Sprint 5)
+    POST   /api/line/unlink               - remove the LINE↔web link (Sprint 5)
+    GET    /api/transactions              - list a user's transactions
+    POST   /api/transactions              - bulk-create transactions
+    PATCH  /api/transactions/<id>         - re-categorise one tx (Learning Loop)
+    POST   /api/imports                   - create an import record
+    GET    /api/imports                   - list a user's imports
+    DELETE /api/imports/<id>              - undo last import
+    GET    /api/notifications             - list a user's notifications
+    POST   /api/notifications             - create a notification
+    POST   /api/notifications/mark-read   - mark notifications as read
+    GET    /api/preferences/<uid>         - get a user's preferences
+    PUT    /api/preferences/<uid>         - update a user's preferences
+    POST   /api/reset                     - wipe a user's txs/imports/notifications
+    POST   /api/ai/complete               - AI proxy (Gemini → Anthropic fallback)
+    POST   /webhook/line                  - LINE Messaging API webhook
+    POST   /api/admin/run-grace-cleanup   - manual cron trigger (token-gated, Sprint 5)
+    GET    /api/health                    - liveness check
 
 Run with:  python backend/app.py   (from the project root)
 """
 
 from __future__ import annotations
 
+import csv
+import io
 import logging
 import os
 import re
 import sys
 import time
 import webbrowser
+from datetime import datetime, timedelta
 from threading import Timer
 
-from flask import Flask, jsonify, render_template, request, send_from_directory
+from flask import Flask, Response, jsonify, render_template, request, send_from_directory
 
 # Make sibling packages importable when running `python backend/app.py` directly.
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -48,6 +63,8 @@ except ImportError:
 from backend.db import SessionLocal, init_db  # noqa: E402
 from backend.models import (  # noqa: E402
     Import,
+    LinePendingPdf,
+    LineUser,
     MerchantOverride,
     Notification,
     Preference,
@@ -162,6 +179,29 @@ def api_parse_pdf():
 
 # ─── Auth (lightweight: upsert by email, no password) ────────────────────────
 
+def _user_payload(user: User) -> dict:
+    """Build the JSON shape returned by every user-facing endpoint.
+
+    Extends ``User.to_dict()`` with grace-period fields so the frontend can
+    show a "Cancel delete" banner without a second round-trip. ``days_until_delete``
+    is a positive int when the grace window is still open, 0 on the day it
+    expires, and ``None`` when no delete is scheduled.
+    """
+    sched = user.delete_scheduled_at
+    days = None
+    if sched is not None:
+        delta = sched - datetime.utcnow()
+        days = max(0, delta.days)
+    return {
+        "id": user.id,
+        "email": user.email,
+        "name": user.name,
+        "display_name": user.display_name,
+        "delete_scheduled_at": sched.isoformat() if sched else None,
+        "days_until_delete": days,
+    }
+
+
 @app.route("/api/auth/login", methods=["POST"])
 def api_login():
     body = request.get_json(silent=True) or {}
@@ -184,7 +224,260 @@ def api_login():
         elif name and not user.name:
             user.name = name
             db.commit()
-        return jsonify(user.to_dict())
+        # NOTE: we intentionally do NOT block login when delete_scheduled_at is
+        # set — the user must be able to sign in to hit "Cancel delete". The
+        # grace-period UI is the frontend's responsibility (banner + countdown).
+        return jsonify(_user_payload(user))
+    finally:
+        db.close()
+
+
+# ─── User Settings (Sprint 5) ────────────────────────────────────────────────
+
+_GRACE_PERIOD_DAYS = 30
+
+
+@app.route("/api/users/<int:user_id>", methods=["GET"])
+def api_get_user(user_id: int):
+    """Return the user's profile + grace-period status.
+
+    Used by the Settings page (Profile section) and the post-login Cancel-Delete
+    banner. See ``_user_payload`` for the response shape.
+    """
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter_by(id=user_id).first()
+        if user is None:
+            return jsonify({"error": "user not found"}), 404
+        return jsonify(_user_payload(user))
+    finally:
+        db.close()
+
+
+@app.route("/api/users/<int:user_id>", methods=["PATCH"])
+def api_patch_user(user_id: int):
+    """Update mutable user fields: ``name`` and/or ``display_name``.
+
+    Body (all fields optional — at least one required):
+      ``{"name": "...", "display_name": "..."}``
+
+    Validation:
+      * ``name`` — 1..100 chars after strip. Empty string rejected to keep the
+        legacy invariant ("users always have a non-empty name").
+      * ``display_name`` — 0..100 chars after strip. Empty string is allowed
+        and clears the field (falls back to ``name`` in the UI).
+    """
+    body = request.get_json(silent=True) or {}
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter_by(id=user_id).first()
+        if user is None:
+            return jsonify({"error": "user not found"}), 404
+
+        touched = False
+        if "name" in body:
+            new_name = (body.get("name") or "").strip()
+            if not (1 <= len(new_name) <= 100):
+                return jsonify({"error": "name must be 1-100 chars"}), 400
+            user.name = new_name
+            touched = True
+        if "display_name" in body:
+            new_display = (body.get("display_name") or "").strip()
+            if len(new_display) > 100:
+                return jsonify({"error": "display_name max 100 chars"}), 400
+            # Empty string → clear the override (UI falls back to ``name``).
+            user.display_name = new_display or None
+            touched = True
+
+        if not touched:
+            return jsonify({"error": "no fields to update"}), 400
+
+        db.commit()
+        return jsonify({"ok": True, "user": _user_payload(user)})
+    except Exception as exc:
+        db.rollback()
+        log.exception("patch user failed for id=%s", user_id)
+        return jsonify({"error": str(exc)}), 500
+    finally:
+        db.close()
+
+
+@app.route("/api/users/<int:user_id>", methods=["DELETE"])
+def api_delete_user(user_id: int):
+    """Schedule a hard-delete with a 30-day grace period.
+
+    Body: ``{"confirm_text": "DELETE", "email": "<user.email>"}``
+
+    Both confirmations must match exactly — defence-in-depth so a stray click
+    or pasted email can't nuke the account. Actual deletion happens in
+    ``_run_grace_period_cleanup`` once the timer expires; until then the user
+    can log in and hit ``POST /api/users/<id>/cancel-delete`` to abort.
+
+    Errors:
+      400 — confirm_text != "DELETE"          → ``"confirm_text_invalid"``
+      400 — email mismatch                    → ``"email_mismatch"``
+      404 — user not found
+    """
+    body = request.get_json(silent=True) or {}
+    confirm_text = (body.get("confirm_text") or "").strip()
+    typed_email = (body.get("email") or "").strip().lower()
+
+    if confirm_text != "DELETE":
+        return jsonify({"error": "confirm_text_invalid"}), 400
+
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter_by(id=user_id).first()
+        if user is None:
+            return jsonify({"error": "user not found"}), 404
+        if typed_email != (user.email or "").lower():
+            return jsonify({"error": "email_mismatch"}), 400
+
+        user.delete_scheduled_at = datetime.utcnow() + timedelta(days=_GRACE_PERIOD_DAYS)
+        db.commit()
+
+        log.info(
+            "delete scheduled for user_id=%s at=%s (grace=%dd)",
+            user_id, user.delete_scheduled_at.isoformat(), _GRACE_PERIOD_DAYS,
+        )
+        return jsonify({
+            "ok": True,
+            "delete_scheduled_at": user.delete_scheduled_at.isoformat(),
+            "days_until_delete": _GRACE_PERIOD_DAYS,
+        })
+    except Exception as exc:
+        db.rollback()
+        log.exception("delete user failed for id=%s", user_id)
+        return jsonify({"error": str(exc)}), 500
+    finally:
+        db.close()
+
+
+@app.route("/api/users/<int:user_id>/cancel-delete", methods=["POST"])
+def api_cancel_delete_user(user_id: int):
+    """Abort a pending hard-delete. Idempotent — safe to call when no delete
+    is scheduled (returns ok=true, was_scheduled=false)."""
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter_by(id=user_id).first()
+        if user is None:
+            return jsonify({"error": "user not found"}), 404
+        was_scheduled = user.delete_scheduled_at is not None
+        user.delete_scheduled_at = None
+        db.commit()
+        if was_scheduled:
+            log.info("delete cancelled for user_id=%s", user_id)
+        return jsonify({"ok": True, "was_scheduled": was_scheduled})
+    except Exception as exc:
+        db.rollback()
+        log.exception("cancel delete failed for id=%s", user_id)
+        return jsonify({"error": str(exc)}), 500
+    finally:
+        db.close()
+
+
+@app.route("/api/users/<int:user_id>/export-csv", methods=["GET"])
+def api_export_user_csv(user_id: int):
+    """Stream all of a user's transactions as a downloadable CSV.
+
+    Format: ``date,merchant,amount,type,category,note`` with a header row.
+    Sorted by date desc (matches the Transactions view ordering). Uses
+    ``csv.writer`` so embedded commas / quotes / newlines are escaped
+    correctly — pasting into Excel/Sheets just works.
+    """
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter_by(id=user_id).first()
+        if user is None:
+            return jsonify({"error": "user not found"}), 404
+
+        rows = (
+            db.query(Transaction)
+            .filter_by(user_id=user_id)
+            .order_by(Transaction.date.desc(), Transaction.id.desc())
+            .all()
+        )
+
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(["date", "merchant", "amount", "type", "category", "note"])
+        for r in rows:
+            writer.writerow([
+                r.date or "",
+                r.merchant or "",
+                f"{r.amount:.2f}" if r.amount is not None else "0.00",
+                r.type or "",
+                r.category or "",
+                r.note or "",
+            ])
+
+        csv_text = buf.getvalue()
+        # UTF-8 BOM so Excel on Windows opens Thai text correctly without
+        # forcing the user to do an Import → encoding step.
+        body = "﻿" + csv_text
+        filename = f"moneymind-{user_id}.csv"
+        # mimetype="text/csv" — let Flask auto-append "; charset=utf-8" so we
+        # don't get a duplicated charset segment in the header.
+        return Response(
+            body,
+            mimetype="text/csv",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+            },
+        )
+    finally:
+        db.close()
+
+
+# ─── LINE link status / unlink (Sprint 5) ───────────────────────────────────
+
+@app.route("/api/line/status", methods=["GET"])
+def api_line_status():
+    """Return whether ``user_id`` has a LINE account linked.
+
+    Response shape:
+      linked    → ``{"linked": true, "display_name": "...", "line_user_id": "U...", "linked_at": "..."}``
+      unlinked  → ``{"linked": false}``
+    """
+    user_id = request.args.get("user_id", type=int)
+    if not user_id:
+        return jsonify({"error": "user_id required"}), 400
+    db = SessionLocal()
+    try:
+        link = db.query(LineUser).filter_by(user_id=user_id).first()
+        if link is None:
+            return jsonify({"linked": False})
+        return jsonify({
+            "linked": True,
+            "display_name": link.display_name,
+            "line_user_id": link.line_user_id,
+            "linked_at": link.linked_at.isoformat() if link.linked_at else None,
+        })
+    finally:
+        db.close()
+
+
+@app.route("/api/line/unlink", methods=["POST"])
+def api_line_unlink():
+    """Remove the LINE↔MoneyMind link for ``user_id``.
+
+    After unlink the LINE user can re-link by sending ``เชื่อม <email>`` to the
+    bot again. We do NOT touch transactions/imports/notifications — they stay
+    with the web account.
+    """
+    body = request.get_json(silent=True) or {}
+    user_id = body.get("user_id")
+    if not user_id:
+        return jsonify({"error": "user_id required"}), 400
+    db = SessionLocal()
+    try:
+        deleted = db.query(LineUser).filter_by(user_id=int(user_id)).delete(synchronize_session=False)
+        db.commit()
+        return jsonify({"ok": True, "unlinked": int(deleted)})
+    except Exception as exc:
+        db.rollback()
+        log.exception("line unlink failed for user_id=%s", user_id)
+        return jsonify({"error": str(exc)}), 500
     finally:
         db.close()
 
@@ -651,9 +944,17 @@ def api_set_prefs(user_id: int):
             ("currency", "currency"),
             ("showAmbient", "show_ambient"),
             ("categoryBudgets", "category_budgets"),
+            # Sprint 5 — Settings → Notifications toggles. Cast to bool so
+            # truthy strings ("false" / 0) from a misbehaving client don't
+            # silently flip the flag the wrong way.
+            ("budgetAlertEnabled", "budget_alert_enabled"),
+            ("lineNotifyEnabled", "line_notify_enabled"),
         ]:
             if key in body:
-                setattr(p, attr, body[key])
+                val = body[key]
+                if attr in ("budget_alert_enabled", "line_notify_enabled"):
+                    val = bool(val)
+                setattr(p, attr, val)
         db.commit()
         db.refresh(p)
         return jsonify(p.to_dict())
@@ -863,6 +1164,95 @@ def line_webhook():
         return jsonify({"error": str(exc)}), 500
 
     return jsonify({"ok": True})
+
+
+# ─── Grace Period Cleanup (Sprint 5) ────────────────────────────────────────
+
+def _run_grace_period_cleanup() -> int:
+    """Hard-delete every user whose 30-day grace period has expired.
+
+    Cascade order matters: child rows (FK → users.id) must be removed before
+    the parent ``users`` row, otherwise Postgres' foreign-key constraints
+    reject the parent delete. We do this explicitly instead of relying on
+    SQLAlchemy's ``cascade="all, delete-orphan"`` because (a) some tables —
+    notably ``merchant_overrides`` and ``line_users`` — don't carry that
+    cascade on the relationship side, and (b) bulk ``DELETE WHERE user_id=?``
+    is dramatically faster than loading each child into the session.
+
+    Returns the number of users hard-deleted (for logging / admin endpoint).
+
+    Hosting note: Render Free tier has no native cron. Trigger this from an
+    external scheduler (e.g. cron-job.org, GitHub Actions, or a paid Render
+    cron service) once every 24h by calling
+    ``POST /api/admin/run-grace-cleanup?token=<ADMIN_CLEANUP_TOKEN>``.
+    """
+    db = SessionLocal()
+    try:
+        expired = (
+            db.query(User)
+            .filter(
+                User.delete_scheduled_at.isnot(None),
+                User.delete_scheduled_at < datetime.utcnow(),
+            )
+            .all()
+        )
+        count = 0
+        for user in expired:
+            uid = user.id
+            # FK-safe order: children before parent. synchronize_session=False
+            # because we're not reading these rows back in this transaction —
+            # avoids SQLAlchemy's "expire" overhead for the bulk delete.
+            db.query(MerchantOverride).filter_by(user_id=uid).delete(synchronize_session=False)
+            db.query(Transaction).filter_by(user_id=uid).delete(synchronize_session=False)
+            db.query(Import).filter_by(user_id=uid).delete(synchronize_session=False)
+            db.query(Notification).filter_by(user_id=uid).delete(synchronize_session=False)
+            db.query(Preference).filter_by(user_id=uid).delete(synchronize_session=False)
+            # Privacy — clear pending PDF bytes (อาจมี PII จาก statement) ก่อนลบ LineUser
+            # LinePendingPdf ผูก line_user_id ไม่ใช่ user_id → ต้อง resolve ก่อน
+            line_uids = [
+                lu.line_user_id
+                for lu in db.query(LineUser).filter_by(user_id=uid).all()
+            ]
+            if line_uids:
+                db.query(LinePendingPdf).filter(
+                    LinePendingPdf.line_user_id.in_(line_uids)
+                ).delete(synchronize_session=False)
+            db.query(LineUser).filter_by(user_id=uid).delete(synchronize_session=False)
+            db.delete(user)
+            count += 1
+        db.commit()
+        if count:
+            log.info("grace cleanup: hard-deleted %d user(s)", count)
+        return count
+    except Exception:
+        db.rollback()
+        log.exception("grace cleanup failed")
+        raise
+    finally:
+        db.close()
+
+
+@app.route("/api/admin/run-grace-cleanup", methods=["POST"])
+def api_run_grace_cleanup():
+    """Manual trigger for the grace-period cleanup job.
+
+    Protected by a shared-secret query param ``?token=<ADMIN_CLEANUP_TOKEN>``.
+    If the env var is unset, the route returns 404 so a curious scanner sees
+    nothing — there's no safe default token to fall back to.
+    """
+    expected = (os.environ.get("ADMIN_CLEANUP_TOKEN") or "").strip()
+    if not expected:
+        # No token configured → endpoint disabled. 404 (not 403) so it's
+        # indistinguishable from a non-existent route from the outside.
+        return jsonify({"error": "not found"}), 404
+    if request.args.get("token", "") != expected:
+        return jsonify({"error": "forbidden"}), 403
+
+    try:
+        deleted = _run_grace_period_cleanup()
+        return jsonify({"ok": True, "deleted_users": deleted})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
 
 
 # ─── Health ─────────────────────────────────────────────────────────────────
