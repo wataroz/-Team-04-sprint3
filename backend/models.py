@@ -151,7 +151,7 @@ class Preference(Base):
     __tablename__ = "preferences"
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
-    accent: Mapped[str] = mapped_column(String(16), default="#C9B68A", nullable=False)
+    accent: Mapped[str] = mapped_column(String(16), default="#D4B978", nullable=False)
     density: Mapped[str] = mapped_column(String(16), default="regular", nullable=False)
     lang: Mapped[str] = mapped_column(String(8), default="th", nullable=False)
     currency: Mapped[str] = mapped_column(String(8), default="THB", nullable=False)

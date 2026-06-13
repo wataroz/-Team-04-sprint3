@@ -30,7 +30,7 @@ function loadCategoryBudgets() {
 }
 
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
-  "accent": "#C9B68A",
+  "accent": "#D4B978",
   "lang": "th",
   "currency": "THB",
   "density": "regular",
@@ -39,7 +39,7 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
 
 // Accent presets — fewer colors = more luxe.
 const ACCENT_OPTIONS = [
-'#C9B68A', // Champagne (default)
+'#D4B978', // Logo gold (default)
 '#88D4A4', // Mint sage
 '#B6A4D8', // Soft lilac
 '#E5A55C' // Warm amber
@@ -182,7 +182,7 @@ function App() {
   // ─── Update CSS vars when accent changes ───
   useEffect(() => {
     const root = document.documentElement;
-    const accent = tw.accent || '#C9B68A';
+    const accent = tw.accent || '#D4B978';
     root.style.setProperty('--accent', accent);
     // Compute soft & glow tints
     root.style.setProperty('--accent-soft', hexToRgba(accent, 0.12));

@@ -2294,7 +2294,7 @@ const SIc = {
 // Accent options — mirror app.jsx ACCENT_OPTIONS so we don't import.
 // If app.jsx changes the palette, update both. Small list = OK.
 const SETTINGS_ACCENT_OPTIONS = [
-  '#C9B68A', // Champagne (default)
+  '#D4B978', // Logo gold (default)
   '#88D4A4', // Mint sage
   '#B6A4D8', // Soft lilac
   '#E5A55C', // Warm amber

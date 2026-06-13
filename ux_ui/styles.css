@@ -21,10 +21,14 @@
   --ink-subtle: rgba(245, 245, 247, 0.38);
   --ink-faint: rgba(245, 245, 247, 0.18);
 
-  /* Accent — driven by Tweaks */
-  --accent: #C9B68A;        /* champagne */
-  --accent-soft: rgba(201, 182, 138, 0.12);
-  --accent-glow: rgba(201, 182, 138, 0.35);
+  /* Accent — driven by Tweaks (default: logo v2 gold) */
+  --accent: #D4B978;        /* logo gold (warmer + saturated champagne) */
+  --accent-soft: rgba(212, 185, 120, 0.12);
+  --accent-glow: rgba(212, 185, 120, 0.35);
+
+  /* Logo v2 companion tones */
+  --cream: #F5EFE3;
+  --cream-soft: rgba(245, 239, 227, 0.06);
 
   --positive: #88D4A4;
   --positive-soft: rgba(136, 212, 164, 0.1);
@@ -69,7 +73,7 @@ body::before {
   position: fixed;
   inset: 0;
   background:
-    radial-gradient(900px 600px at 78% 8%, rgba(201, 182, 138, 0.06), transparent 60%),
+    radial-gradient(900px 600px at 78% 8%, rgba(212, 185, 120, 0.06), transparent 60%),
     radial-gradient(700px 500px at 12% 92%, rgba(136, 212, 164, 0.04), transparent 60%);
   pointer-events: none;
   z-index: 0;
@@ -124,29 +128,19 @@ body::after {
 .brand-mark {
   width: 36px;
   height: 36px;
-  border-radius: 12px;
-  background: radial-gradient(circle at 30% 30%, #2A2A2E, #0A0A0B 70%);
-  border: 1px solid var(--border-strong);
   display: grid;
   place-items: center;
   position: relative;
   overflow: hidden;
-}
-
-.brand-mark::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(circle at 30% 25%, var(--accent-glow), transparent 55%);
-  opacity: 0.6;
+  /* logo v2 ships its own cream frame + gold border — keep wrapper transparent */
 }
 
 .brand-mark svg {
-  width: 18px;
-  height: 18px;
+  width: 100%;
+  height: 100%;
   position: relative;
   z-index: 1;
-  color: var(--accent);
+  display: block;
 }
 
 .brand-name {
@@ -786,7 +780,7 @@ body::after {
 }
 
 .auth-brand .brand-mark { width: 44px; height: 44px; }
-.auth-brand .brand-mark svg { width: 22px; height: 22px; }
+.auth-brand .brand-mark svg { width: 100%; height: 100%; }
 
 .auth-brand-name {
   font-family: var(--serif);
@@ -1258,7 +1252,7 @@ body::after {
   padding: 5px 12px;
   border-radius: 999px;
   background: var(--accent-soft);
-  border: 1px solid rgba(201, 182, 138, 0.25);
+  border: 1px solid rgba(212, 185, 120, 0.25);
   color: var(--accent);
   font-size: 10.5px;
   letter-spacing: 2px;
@@ -1648,7 +1642,7 @@ body::after {
   text-align: center;
   transition: all 300ms;
   background:
-    radial-gradient(600px 300px at 50% 0%, rgba(201, 182, 138, 0.04), transparent 70%),
+    radial-gradient(600px 300px at 50% 0%, rgba(212, 185, 120, 0.04), transparent 70%),
     var(--surface);
   position: relative;
   overflow: hidden;
@@ -1658,7 +1652,7 @@ body::after {
 .dropzone:hover, .dropzone.dragging {
   border-color: var(--accent);
   background:
-    radial-gradient(600px 400px at 50% 0%, rgba(201, 182, 138, 0.1), transparent 70%),
+    radial-gradient(600px 400px at 50% 0%, rgba(212, 185, 120, 0.1), transparent 70%),
     var(--surface);
 }
 

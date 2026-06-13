@@ -7,7 +7,7 @@
 const CATEGORIES = {
   food:      { th: 'อาหารและเครื่องดื่ม', en: 'Food & Drink',   icon: '🍜', color: '#D88A8A' },
   transport: { th: 'เดินทาง',              en: 'Transport',     icon: '🚕', color: '#8AB4D8' },
-  shopping:  { th: 'ช้อปปิ้ง',             en: 'Shopping',       icon: '🛍', color: '#C9B68A' },
+  shopping:  { th: 'ช้อปปิ้ง',             en: 'Shopping',       icon: '🛍', color: '#C9A66B' },
   home:      { th: 'ค่าใช้จ่ายบ้าน',        en: 'Home & Bills',  icon: '🏠', color: '#B6A4D8' },
   entertain: { th: 'บันเทิง',              en: 'Entertainment', icon: '🎬', color: '#E5A55C' },
   groceries: { th: 'ของใช้ในบ้าน',         en: 'Groceries',     icon: '🛒', color: '#7BB7A4' },
@@ -439,9 +439,21 @@ const SAMPLE_NOTIFICATIONS = [
 
 // Brand glyph SVG (used in sidebar & elsewhere)
 const BRAND_GLYPH = `
-<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <path d="M4 18 L4 8 L8 14 L12 8 L16 14 L20 8 L20 18" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" fill="none"/>
-  <circle cx="12" cy="20" r="0.9" fill="currentColor"/>
+<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <rect x="56" y="56" width="400" height="400" rx="72" ry="72" fill="#F5EFE3"/>
+  <rect x="76" y="76" width="360" height="360" rx="60" ry="60" fill="none" stroke="#14141A" stroke-width="6"/>
+  <rect x="92" y="92" width="328" height="328" rx="48" ry="48" fill="none" stroke="#D4B978" stroke-width="2"/>
+  <g transform="translate(256 280)">
+    <g transform="translate(-68 -36) skewX(-18)">
+      <rect x="-26" y="-78" width="52" height="156" rx="14" ry="14" fill="#14141A" stroke="#D4B978" stroke-width="3"/>
+    </g>
+    <g transform="translate(-10 0) skewX(-18)">
+      <rect x="-26" y="-50" width="52" height="124" rx="14" ry="14" fill="#14141A" stroke="#D4B978" stroke-width="3"/>
+    </g>
+    <g transform="translate(68 -36) skewX(-18)">
+      <rect x="-26" y="-78" width="52" height="156" rx="14" ry="14" fill="#14141A" stroke="#D4B978" stroke-width="3"/>
+    </g>
+  </g>
 </svg>
 `;
 

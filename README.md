@@ -253,7 +253,7 @@ Open http://localhost:5000
 
 ## 🎨 Design Highlights
 
-- **Dark Luxe Aesthetic**: Champagne accent (#C9B68A) on deep black canvas
+- **Dark Luxe Aesthetic**: Logo gold accent (#D4B978) on deep black canvas
 - **Serif Typography**: Instrument Serif สำหรับ headlines
 - **Fluid Scaling**: ใช้ `clamp()` ทำให้ font scale ตามขนาดหน้าจอ
 - **Bottom Nav on Mobile**: Sidebar กลายเป็น bottom nav อัตโนมัติบนมือถือ

@@ -413,7 +413,7 @@ function AreaChart({ series, height = 280, labels, tooltipLabel }) {
         transform: 'translate(-50%, -100%)',
         pointerEvents: 'none',
         background: 'var(--accent-soft)',
-        border: '1px solid rgba(201, 182, 138, 0.35)',
+        border: '1px solid var(--accent-glow)',
         color: 'var(--accent)',
         padding: '3px 8px',
         borderRadius: 8,
