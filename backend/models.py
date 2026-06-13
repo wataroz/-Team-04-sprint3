@@ -38,7 +38,14 @@ class User(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    # Optional friendly display name (Sprint 5 — Settings page). Falls back to
+    # ``name`` in the UI when empty so existing users see no change.
+    display_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+    # Hard-delete grace period (Sprint 5). When set, the daily cron will purge
+    # this user + all FK data once ``utcnow() >= delete_scheduled_at``. NULL =
+    # account is active. Indexed so the cleanup query stays cheap on Postgres.
+    delete_scheduled_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
 
     transactions: Mapped[list["Transaction"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     imports: Mapped[list["Import"]] = relationship(back_populates="user", cascade="all, delete-orphan")
@@ -46,7 +53,12 @@ class User(Base):
     preference: Mapped[Optional["Preference"]] = relationship(back_populates="user", cascade="all, delete-orphan", uselist=False)
 
     def to_dict(self) -> dict:
-        return {"id": self.id, "email": self.email, "name": self.name}
+        return {
+            "id": self.id,
+            "email": self.email,
+            "name": self.name,
+            "display_name": self.display_name,
+        }
 
 
 class Import(Base):
@@ -145,6 +157,11 @@ class Preference(Base):
     currency: Mapped[str] = mapped_column(String(8), default="THB", nullable=False)
     show_ambient: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     category_budgets: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    # Notification toggles (Sprint 5 — Settings page). Default TRUE so the
+    # existing behaviour (push budget alerts via LINE) keeps working for all
+    # current users; they can opt out from Settings → Notifications.
+    budget_alert_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    line_notify_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     user: Mapped[User] = relationship(back_populates="preference")
 
@@ -156,6 +173,8 @@ class Preference(Base):
             "currency": self.currency,
             "showAmbient": self.show_ambient,
             "categoryBudgets": self.category_budgets or {},
+            "budgetAlertEnabled": bool(self.budget_alert_enabled),
+            "lineNotifyEnabled": bool(self.line_notify_enabled),
         }
 
 
