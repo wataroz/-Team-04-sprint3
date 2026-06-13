@@ -71,6 +71,9 @@ function App() {
   const [resetMessage, setResetMessage] = useState('');
   // Edit Category — Learning Loop (Day 5) toast feedback
   const [editToast, setEditToast] = useState('');
+  // Settings (Sprint 5) — Delete Account modal + toast feedback
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [settingsToast, setSettingsToast] = useState('');
   const notifRef = useRef(null);
 
   // ─── Load persisted data from backend when the user logs in ───
@@ -399,6 +402,80 @@ function App() {
     }
   };
 
+  // ─── Settings handlers (Sprint 5) ───
+  // PATCH /api/users/<id> { name?, display_name? } → updates local user
+  const patchUser = async (patch) => {
+    if (!user || !user.id) return { ok: false };
+    try {
+      const res = await fetch(`/api/users/${user.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (res.ok && j.user) {
+        // Merge backend response into local user state so display_name +
+        // grace-period fields stay in sync. Spread old first so we don't
+        // lose fields the server didn't echo back.
+        setUser((u) => ({ ...u, ...j.user }));
+        return { ok: true };
+      }
+      return { ok: false, error: j.error };
+    } catch (err) {
+      console.error('[patchUser] failed', err);
+      return { ok: false };
+    }
+  };
+
+  // POST /api/users/<id>/cancel-delete → clears delete_scheduled_at locally
+  const cancelDelete = async () => {
+    if (!user || !user.id) return { ok: false };
+    try {
+      const res = await fetch(`/api/users/${user.id}/cancel-delete`, {
+        method: 'POST',
+      });
+      if (!res.ok) return { ok: false };
+      // Local clear — backend already wiped it
+      setUser((u) => ({ ...u, delete_scheduled_at: null, days_until_delete: null }));
+      setSettingsToast(t(I18N.banner_cancel_success, lang));
+      setTimeout(() => setSettingsToast(''), 3500);
+      return { ok: true };
+    } catch (err) {
+      console.error('[cancelDelete] failed', err);
+      return { ok: false };
+    }
+  };
+
+  // DELETE /api/users/<id> { confirm_text, email } → schedules grace period
+  // On success → show toast + logout (so user sees the success state once,
+  // then is bounced to login where re-signing in is the "cancel delete" path).
+  const deleteAccount = async (confirmText, email) => {
+    if (!user || !user.id) return { ok: false };
+    try {
+      const res = await fetch(`/api/users/${user.id}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm_text: confirmText, email }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setDeleteModalOpen(false);
+        setSettingsToast(t(I18N.delete_success_toast, lang));
+        // Give the user 2.5s to read the toast before logging them out.
+        setTimeout(() => {
+          setSettingsToast('');
+          handleLogout();
+        }, 2500);
+        return { ok: true };
+      }
+      // Map backend error codes for the modal to render properly.
+      return { ok: false, errorCode: j.error };
+    } catch (err) {
+      console.error('[deleteAccount] failed', err);
+      return { ok: false, errorCode: 'network' };
+    }
+  };
+
   const state = { txs, currency, lang, budget, catBudgets };
 
   // ─── Not logged in ─ show auth screens ───
@@ -484,6 +561,16 @@ function App() {
           {Ic.sparkles}{lang === 'th' ? 'คุยกับ Mind' : 'Chat with Mind'}
         </div>
 
+        <div className="nav-section-label">{lang === 'th' ? 'ระบบ' : 'System'}</div>
+        <div className={'nav-item' + (view === 'settings' ? ' active' : '')} onClick={() => setView('settings')}>
+          {/* Gear icon — inline so we don't touch ux_ui/src/ui.jsx */}
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" width="16" height="16">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+          {t(I18N.nav_settings, lang)}
+        </div>
+
         <div className="sidebar-footer">
           <div className="avatar">{(user.name || 'P').charAt(0).toUpperCase()}</div>
           <div>
@@ -567,12 +654,24 @@ function App() {
           setAnalyzing={setAnalyzing} />
 
         }
+        {view === 'settings' &&
+        <SettingsView
+          user={user}
+          lang={lang}
+          tw={tw}
+          setTweak={setTweak}
+          onPatchUser={patchUser}
+          onOpenDeleteModal={() => setDeleteModalOpen(true)}
+          onSetUser={setUser} />
+        }
       </main>
 
       {/* Chat */}
       <ChatPanel state={state} open={chatOpen} onClose={() => setChatOpen(false)} />
 
-      {/* Tweaks */}
+      {/* Floating Tweaks panel — disabled in Sprint 5 (settings live in /settings now).
+          Kept on the login screen only because users may need to change language
+          before signing in. Re-enable here by un-commenting this block.
       <TweaksPanel title="Tweaks">
         <TweakSection label={lang === 'th' ? 'ลักษณะ' : 'Appearance'} />
         <TweakColor
@@ -580,18 +679,18 @@ function App() {
           value={tw.accent}
           options={ACCENT_OPTIONS}
           onChange={(v) => setTweak('accent', v)} />
-        
+
         <TweakRadio
           label={lang === 'th' ? 'ความหนาแน่น' : 'Density'}
           value={tw.density}
           options={['regular', 'compact']}
           onChange={(v) => setTweak('density', v)} />
-        
+
         <TweakToggle
           label={lang === 'th' ? 'แสงพื้นหลัง' : 'Ambient glow'}
           value={tw.showAmbient}
           onChange={(v) => setTweak('showAmbient', v)} />
-        
+
 
         <TweakSection label={lang === 'th' ? 'ภาษาและสกุลเงิน' : 'Locale'} />
         <TweakRadio
@@ -599,13 +698,13 @@ function App() {
           value={tw.lang}
           options={['th', 'en']}
           onChange={(v) => setTweak('lang', v)} />
-        
+
         <TweakRadio
           label={lang === 'th' ? 'สกุลเงิน' : 'Currency'}
           value={tw.currency}
           options={['THB', 'USD']}
           onChange={(v) => setTweak('currency', v)} />
-        
+
 
         <TweakSection label="AI" />
         <TweakButton onClick={() => {setView('insights');}}>
@@ -614,7 +713,45 @@ function App() {
         <TweakButton onClick={() => setChatOpen(true)}>
           {lang === 'th' ? 'เปิด Chat กับ Mind' : 'Open Mind chat'}
         </TweakButton>
-      </TweaksPanel>
+      </TweaksPanel> */}
+
+      {/* Cancel-Delete Banner — sticky on every page while a delete is scheduled */}
+      <CancelDeleteBanner
+        user={user}
+        lang={lang}
+        onCancel={cancelDelete} />
+
+      {/* Delete Account modal (3-step) */}
+      {deleteModalOpen &&
+        <DeleteAccountModal
+          user={user}
+          lang={lang}
+          onClose={() => setDeleteModalOpen(false)}
+          onConfirm={deleteAccount} />
+      }
+
+      {/* Settings toast (post-action feedback for delete/cancel-delete) */}
+      {settingsToast &&
+        <div
+          role="status"
+          style={{
+            position: 'fixed',
+            bottom: 24,
+            right: 24,
+            zIndex: 260,
+            background: '#111114',
+            border: '1px solid var(--accent)',
+            borderRadius: 14,
+            padding: '12px 18px',
+            color: 'var(--ink)',
+            fontSize: 13,
+            maxWidth: 380,
+            boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+            animation: 'fadeIn 240ms ease-out',
+          }}>
+          {settingsToast}
+        </div>
+      }
 
       {/* Reset Statement confirm modal */}
       {resetOpen &&

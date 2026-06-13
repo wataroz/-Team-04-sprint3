@@ -243,6 +243,117 @@ const I18N = {
   edit_cat_success:              { th: 'อัปเดตหมวดสำเร็จ',                       en: 'Category updated' },
   edit_cat_success_with_pattern: { th: 'อัปเดตหมวดสำเร็จ · จะใช้กับร้านนี้ครั้งต่อไป', en: 'Category updated — saved pattern for future' },
   edit_cat_failed:               { th: 'อัปเดตไม่สำเร็จ ลองอีกครั้ง',             en: 'Update failed — please try again' },
+
+  // ─── Settings Page (Sprint 5) ─────────────────────────────────────────────
+  nav_settings:              { th: 'ตั้งค่า',                                     en: 'Settings' },
+  nav_settings_short:        { th: 'ตั้งค่า',                                     en: 'Settings' },
+  settings_title:            { th: 'การตั้งค่า',                                   en: 'Settings' },
+  settings_subtitle:         { th: 'จัดการบัญชี การแสดงผล และการแจ้งเตือนของคุณ', en: 'Manage your account, appearance, and notifications.' },
+
+  // Tabs
+  tab_profile:               { th: 'โปรไฟล์',                                    en: 'Profile' },
+  tab_appearance:            { th: 'การแสดงผล',                                 en: 'Appearance' },
+  tab_line:                  { th: 'LINE',                                       en: 'LINE' },
+  tab_notifications:         { th: 'การแจ้งเตือน',                                en: 'Notifications' },
+
+  // Profile section
+  profile_section_title:     { th: 'โปรไฟล์',                                    en: 'Profile' },
+  profile_section_sub:       { th: 'จัดการข้อมูลส่วนตัวและบัญชีของคุณ',            en: 'Manage your personal information and account.' },
+  profile_name_label:        { th: 'ชื่อจริง',                                     en: 'Name' },
+  profile_name_help:         { th: 'ใช้สำหรับการบันทึกข้อมูลในระบบ',              en: 'Used for record-keeping in the system.' },
+  profile_name_placeholder:  { th: 'เช่น สมชาย ใจดี',                            en: 'e.g. Pawin' },
+  profile_display_name_label:{ th: 'ชื่อที่แสดง',                                  en: 'Display name' },
+  profile_display_name_help: { th: 'ชื่อนี้จะแสดงในแอป — เว้นว่างเพื่อใช้ชื่อจริง',  en: 'Shown in the app — leave blank to use your name.' },
+  profile_display_name_placeholder: { th: 'เช่น พอลล่า',                          en: 'e.g. Paula' },
+  profile_email_label:       { th: 'อีเมล',                                       en: 'Email' },
+  profile_email_help:        { th: 'อีเมลใช้สำหรับเข้าระบบ — แก้ไขไม่ได้',          en: 'Used to sign in — cannot be changed.' },
+  save:                      { th: 'บันทึก',                                     en: 'Save' },
+  saving:                    { th: 'กำลังบันทึก...',                              en: 'Saving…' },
+  saved:                     { th: 'บันทึกแล้ว',                                 en: 'Saved' },
+  save_failed:               { th: 'บันทึกไม่สำเร็จ ลองอีกครั้ง',                  en: 'Save failed — please try again' },
+
+  // Appearance section
+  appearance_section_title:  { th: 'การแสดงผล',                                  en: 'Appearance' },
+  appearance_section_sub:    { th: 'ปรับแต่งสี ความหนาแน่น ภาษา และสกุลเงิน',     en: 'Tune accent, density, language and currency.' },
+  appearance_accent:         { th: 'สีเน้น',                                      en: 'Accent color' },
+  appearance_accent_desc:    { th: 'สีหลักที่ใช้ในแอป',                            en: 'Primary highlight color across the app.' },
+  appearance_density:        { th: 'ความหนาแน่น',                                en: 'Density' },
+  appearance_density_desc:   { th: 'ระยะห่างระหว่างองค์ประกอบ',                    en: 'Spacing between elements.' },
+  appearance_density_regular:{ th: 'ปกติ',                                       en: 'Regular' },
+  appearance_density_compact:{ th: 'แน่น',                                       en: 'Compact' },
+  appearance_ambient:        { th: 'แสงพื้นหลัง',                                 en: 'Ambient glow' },
+  appearance_ambient_desc:   { th: 'แสงไล่ระดับนุ่ม ๆ ของพื้นหลัง',                en: 'Soft radial backdrop gradients.' },
+  appearance_lang:           { th: 'ภาษา',                                       en: 'Language' },
+  appearance_lang_desc:      { th: 'ภาษาที่ใช้ในแอป',                              en: 'Interface language.' },
+  appearance_currency:       { th: 'สกุลเงิน',                                    en: 'Currency' },
+  appearance_currency_desc:  { th: 'หน่วยเงินที่แสดงในแอป',                        en: 'Currency unit shown across the app.' },
+
+  // LINE section
+  line_section_title:        { th: 'เชื่อมต่อ LINE',                              en: 'Connect to LINE' },
+  line_section_sub:          { th: 'รับการแจ้งเตือนและส่ง Statement ผ่าน LINE',   en: 'Get alerts and upload statements via LINE.' },
+  line_qr_title:             { th: 'สแกน QR เพื่อเชื่อมบัญชี',                     en: 'Scan QR to link your account' },
+  line_qr_step1:             { th: 'เปิดแอป LINE บนมือถือ',                       en: 'Open the LINE app on your phone' },
+  line_qr_step2:             { th: 'สแกน QR เพื่อเพิ่ม MoneyMind เป็นเพื่อน',     en: 'Scan the QR to add MoneyMind as a friend' },
+  line_qr_step3:             { th: 'พิมพ์อีเมลของคุณในแชทเพื่อผูกบัญชี',          en: 'Send your email in chat to link the account' },
+  line_or:                   { th: 'หรือ',                                       en: 'or' },
+  line_linked_label:         { th: 'บัญชี LINE ที่เชื่อมไว้',                      en: 'Linked LINE account' },
+  line_linked_since:         { th: 'เชื่อมไว้ตั้งแต่',                              en: 'Linked since' },
+  line_unlink_btn:           { th: 'ยกเลิกการเชื่อม',                              en: 'Unlink' },
+  line_unlink_confirm:       { th: 'ยกเลิกการเชื่อมบัญชี LINE? คุณจะต้องสแกน QR และพิมพ์อีเมลใหม่เพื่อเชื่อมอีกครั้ง', en: 'Unlink your LINE account? You will need to scan the QR and send your email again to relink.' },
+  line_unlink_success:       { th: 'ยกเลิกการเชื่อมสำเร็จ',                        en: 'Successfully unlinked' },
+  line_unlink_failed:        { th: 'ยกเลิกไม่สำเร็จ ลองอีกครั้ง',                  en: 'Unlink failed — please try again' },
+  line_loading:              { th: 'กำลังโหลดสถานะ LINE...',                     en: 'Loading LINE status…' },
+
+  // Notifications section
+  notifications_section_title:{ th: 'การแจ้งเตือน',                                en: 'Notifications' },
+  notifications_section_sub: { th: 'เลือกประเภทการแจ้งเตือนที่ต้องการได้รับ',       en: 'Choose which notifications you want to receive.' },
+  notif_budget_alert_label:  { th: 'การแจ้งเตือนงบประมาณ',                        en: 'Budget alerts' },
+  notif_budget_alert_desc:   { th: 'แจ้งเตือนเมื่อใช้งบเกิน 80% หรือเต็มงบในหมวดใด ๆ', en: 'Notify when any category passes 80% or goes over budget.' },
+  notif_line_label:          { th: 'การแจ้งเตือนผ่าน LINE',                        en: 'LINE notifications' },
+  notif_line_desc:           { th: 'ส่งข้อความเตือนงบประมาณผ่าน LINE Bot',         en: 'Send budget alerts as LINE messages.' },
+  notif_line_needs_link:     { th: 'ต้องเชื่อมบัญชี LINE ก่อนใช้งาน',                en: 'Link your LINE account first to enable.' },
+
+  // Danger Zone
+  danger_zone_title:         { th: 'พื้นที่อันตราย',                                en: 'Danger Zone' },
+  delete_account_label:      { th: 'ลบบัญชี',                                     en: 'Delete account' },
+  delete_account_desc:       { th: 'ลบบัญชีและข้อมูลทั้งหมดของคุณภายใน 30 วัน — กู้คืนได้ภายใน 30 วันโดยล็อกอินใหม่', en: 'Delete your account and all data in 30 days — recoverable by signing in within the grace period.' },
+  delete_account_btn:        { th: 'ลบบัญชี',                                     en: 'Delete account' },
+
+  // Delete Modal — 3 steps
+  delete_modal_title:        { th: 'ลบบัญชี',                                     en: 'Delete account' },
+  delete_step_label:         { th: 'ขั้นตอนที่ {n} จาก 3',                         en: 'Step {n} of 3' },
+  // Step 1 — warning
+  delete_step1_warn_head:    { th: 'การลบบัญชีจะส่งผลให้',                          en: 'Deleting your account will:' },
+  delete_step1_item_1:       { th: 'ลบประวัติธุรกรรม การนำเข้า และการแจ้งเตือนทั้งหมด', en: 'Erase all transactions, imports, and notifications' },
+  delete_step1_item_2:       { th: 'ลบงบประมาณ การตั้งค่า และการเชื่อม LINE',     en: 'Remove budgets, preferences, and LINE linking' },
+  delete_step1_item_3:       { th: 'ดำเนินการหลังจากผ่านไป 30 วัน — ภายใน 30 วัน login ก่อนหน้านั้นเพื่อยกเลิกได้', en: 'Take effect after 30 days — sign in before then to cancel' },
+  delete_step1_export_csv:   { th: 'ดาวน์โหลด CSV ก่อนลบ',                       en: 'Download CSV first' },
+  delete_step1_continue:     { th: 'เข้าใจ ดำเนินการต่อ',                          en: 'I understand, continue' },
+  // Step 2 — type DELETE
+  delete_step2_prompt:       { th: 'พิมพ์ DELETE เพื่อยืนยัน',                     en: 'Type DELETE to confirm' },
+  delete_step2_help:         { th: 'พิมพ์ตัวพิมพ์ใหญ่ทั้งหมด เพื่อยืนยันว่าคุณต้องการลบบัญชีจริง', en: 'Type in all uppercase to confirm you really want to delete.' },
+  delete_step2_placeholder:  { th: 'DELETE',                                     en: 'DELETE' },
+  delete_step2_next:         { th: 'ต่อไป',                                       en: 'Next' },
+  // Step 3 — email verify
+  delete_step3_prompt:       { th: 'ยืนยันด้วยอีเมลของบัญชีนี้',                    en: 'Confirm with this account\'s email' },
+  delete_step3_help:         { th: 'พิมพ์อีเมลของคุณเพื่อยืนยันขั้นสุดท้าย',         en: 'Type your email for one final confirmation.' },
+  delete_step3_placeholder:  { th: 'อีเมลของคุณ',                                  en: 'Your email' },
+  delete_step3_submit:       { th: 'ลบบัญชีของฉัน',                                en: 'Delete my account' },
+  delete_step3_submitting:   { th: 'กำลังลบ...',                                  en: 'Deleting…' },
+  delete_back:               { th: 'ย้อนกลับ',                                    en: 'Back' },
+  delete_cancel:             { th: 'ยกเลิก',                                       en: 'Cancel' },
+  delete_error_text:         { th: 'พิมพ์ DELETE ให้ตรง',                          en: 'Please type DELETE exactly' },
+  delete_error_email:        { th: 'อีเมลไม่ตรงกับบัญชี',                          en: 'Email does not match your account' },
+  delete_error_generic:      { th: 'เกิดข้อผิดพลาด ลองอีกครั้ง',                    en: 'Something went wrong — please try again' },
+  delete_success_toast:      { th: 'บัญชีจะถูกลบใน 30 วัน · login ก่อนหน้านั้นเพื่อยกเลิก', en: 'Account will be deleted in 30 days — sign in before then to cancel' },
+
+  // Cancel Delete Banner
+  banner_days_until_delete:  { th: 'บัญชีของคุณจะถูกลบใน {n} วัน',                en: 'Your account will be deleted in {n} days' },
+  banner_days_today:         { th: 'บัญชีของคุณจะถูกลบในวันนี้',                   en: 'Your account will be deleted today' },
+  banner_sub:                { th: 'login ก่อนหน้านั้นเพื่อยกเลิกการลบ',           en: 'Sign in before then to cancel deletion' },
+  banner_cancel_btn:         { th: 'ยกเลิกการลบ',                                  en: 'Cancel deletion' },
+  banner_cancel_success:     { th: 'ยกเลิกการลบบัญชีแล้ว',                         en: 'Account deletion cancelled' },
+  banner_cancel_failed:      { th: 'ยกเลิกไม่สำเร็จ ลองอีกครั้ง',                  en: 'Cancel failed — please try again' },
   // Number-style helpers (no string)
 };
 

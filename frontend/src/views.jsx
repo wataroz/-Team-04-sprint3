@@ -2016,7 +2016,7 @@ function ChatPanel({ state, open, onClose }) {
 
 }
 
-Object.assign(window, { Dashboard, Transactions, Upload, Insights, Budgets, ChatPanel, buildSummaryForAI });
+Object.assign(window, { Dashboard, Transactions, Upload, Insights, Budgets, ChatPanel, buildSummaryForAI, SettingsView, DeleteAccountModal, CancelDeleteBanner });
 
 // ─────────────────────────────────────────────────────────────
 // Budgets — per-category monthly spending limits
@@ -2224,6 +2224,941 @@ function BudgetRow({ cat, catObj, limit, spent, pct, status, remaining, currency
           })}
         </span>
       </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Settings (Sprint 5)
+// 4 tabs (Profile / Appearance / LINE / Notifications) + Danger Zone.
+// Receives:
+//   user                — current user object (with delete_scheduled_at, etc.)
+//   lang, tw, setTweak  — appearance bindings (lifted from app.jsx tweaks)
+//   onPatchUser         — async (patch) → { ok, user } — wraps PATCH /api/users/<id>
+//   onOpenDeleteModal   — () → void — toggles DeleteAccountModal in app.jsx
+//   onLogout            — () → void — passed through for downstream sign-out
+//   prefs, onSetPref    — preference state + setter (camelCase keys)
+// ─────────────────────────────────────────────────────────────
+
+// Small inline-SVG icon set used only on the Settings page so we don't have
+// to touch ux_ui/src/ui.jsx (BEST's territory).
+const SIc = {
+  user: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" />
+    </svg>
+  ),
+  palette: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 3a9 9 0 1 0 0 18c1.5 0 2-1 2-2s-1-1-1-2 1-2 2-2h2a4 4 0 0 0 4-4c0-3.8-4-7-9-7z"/>
+      <circle cx="7.5" cy="10.5" r="1.2" fill="currentColor" stroke="none"/>
+      <circle cx="12" cy="7" r="1.2" fill="currentColor" stroke="none"/>
+      <circle cx="16.5" cy="10.5" r="1.2" fill="currentColor" stroke="none"/>
+    </svg>
+  ),
+  line: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 11.5c0-5-4.5-9-10-9s-10 4-10 9c0 4.5 3.7 8.3 8.7 8.9.5.1.7.4.6 1l-.3 1.4c-.2.8.4 1 1 .7 1.2-.5 5.4-3.5 7.4-5.9 1.6-1.7 2.6-3.8 2.6-6.1z"/>
+    </svg>
+  ),
+  bell: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10 21a2 2 0 0 0 4 0" />
+    </svg>
+  ),
+  gear: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="3"/>
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+    </svg>
+  ),
+  trash: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 7h16M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2m2 0v12a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V7M10 11v6M14 11v6"/>
+    </svg>
+  ),
+  warn: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+      <line x1="12" y1="9" x2="12" y2="13"/>
+      <line x1="12" y1="17" x2="12.01" y2="17"/>
+    </svg>
+  ),
+  download: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+    </svg>
+  ),
+};
+
+// Accent options — mirror app.jsx ACCENT_OPTIONS so we don't import.
+// If app.jsx changes the palette, update both. Small list = OK.
+const SETTINGS_ACCENT_OPTIONS = [
+  '#C9B68A', // Champagne (default)
+  '#88D4A4', // Mint sage
+  '#B6A4D8', // Soft lilac
+  '#E5A55C', // Warm amber
+];
+
+function SettingsView({ user, lang, tw, setTweak, onPatchUser, onOpenDeleteModal, onSetUser }) {
+  const [activeTab, setActiveTab] = useState('profile');
+
+  return (
+    <div className="page-enter">
+      <div className="topbar" style={{ marginBottom: 24 }}>
+        <div>
+          <div className="crumb">{t(I18N.settings_title, lang)}</div>
+          <h1 className="greeting">
+            {lang === 'th' ?
+              <>การ <em style={{ fontFamily: '"Instrument Serif"' }}>ตั้งค่า</em></> :
+              <>Your <em>settings</em></>}
+          </h1>
+          <p style={{ color: 'var(--ink-subtle)', fontSize: 13.5, margin: '6px 0 0' }}>
+            {t(I18N.settings_subtitle, lang)}
+          </p>
+        </div>
+      </div>
+
+      <div className="settings-view">
+        <aside className="settings-sidebar">
+          <div className="settings-sidebar-label">{t(I18N.settings_title, lang)}</div>
+          {[
+            { id: 'profile',       label: t(I18N.tab_profile, lang),       icon: SIc.user },
+            { id: 'appearance',    label: t(I18N.tab_appearance, lang),    icon: SIc.palette },
+            { id: 'line',          label: t(I18N.tab_line, lang),          icon: SIc.line },
+            { id: 'notifications', label: t(I18N.tab_notifications, lang), icon: SIc.bell },
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              className={`settings-tab ${activeTab === tab.id ? 'active' : ''}`}
+              onClick={() => setActiveTab(tab.id)}>
+              {tab.icon}
+              <span className="settings-tab-text">{tab.label}</span>
+            </button>
+          ))}
+        </aside>
+
+        <main className="settings-content">
+          {activeTab === 'profile' &&
+            <SettingsProfileSection
+              user={user}
+              lang={lang}
+              onPatchUser={onPatchUser}
+              onOpenDeleteModal={onOpenDeleteModal} />
+          }
+          {activeTab === 'appearance' &&
+            <SettingsAppearanceSection
+              lang={lang}
+              tw={tw}
+              setTweak={setTweak} />
+          }
+          {activeTab === 'line' &&
+            <SettingsLineSection
+              user={user}
+              lang={lang} />
+          }
+          {activeTab === 'notifications' &&
+            <SettingsNotificationsSection
+              user={user}
+              lang={lang} />
+          }
+        </main>
+      </div>
+    </div>
+  );
+}
+
+// ── Profile section ──────────────────────────────────────────
+// Local state mirror so the user can type without Save being blocked by
+// pristine state. We diff against the props on Save so re-clicking is a
+// no-op for unchanged fields (backend ignores 400-on-empty by skipping).
+function SettingsProfileSection({ user, lang, onPatchUser, onOpenDeleteModal }) {
+  const [name, setName] = useState(user.name || '');
+  const [displayName, setDisplayName] = useState(user.display_name || '');
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState(''); // '' | 'saved' | 'error' | error msg
+
+  useEffect(() => {
+    setName(user.name || '');
+    setDisplayName(user.display_name || '');
+  }, [user.id, user.name, user.display_name]);
+
+  const dirty = name.trim() !== (user.name || '').trim() ||
+    displayName.trim() !== (user.display_name || '').trim();
+
+  const handleSave = async () => {
+    if (saving) return;
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      setStatus(t(I18N.save_failed, lang));
+      setTimeout(() => setStatus(''), 3000);
+      return;
+    }
+    setSaving(true);
+    setStatus('');
+    const patch = {};
+    if (trimmedName !== (user.name || '').trim()) patch.name = trimmedName;
+    if (displayName.trim() !== (user.display_name || '').trim()) {
+      patch.display_name = displayName.trim();
+    }
+    const r = await onPatchUser(patch);
+    setSaving(false);
+    if (r && r.ok) {
+      setStatus(t(I18N.saved, lang));
+    } else {
+      setStatus(t(I18N.save_failed, lang));
+    }
+    setTimeout(() => setStatus(''), 3000);
+  };
+
+  return (
+    <section className="settings-section">
+      <div className="settings-section-head">
+        <h2 className="settings-section-title">{t(I18N.profile_section_title, lang)}</h2>
+        <p className="settings-section-sub">{t(I18N.profile_section_sub, lang)}</p>
+      </div>
+
+      <div className="settings-card">
+        <div className="settings-card-header">
+          <div>
+            <h3 className="settings-card-title">{t(I18N.profile_name_label, lang)}</h3>
+            <p className="settings-card-desc">{t(I18N.profile_name_help, lang)}</p>
+          </div>
+        </div>
+        <div className="settings-card-body">
+          <input
+            className="field-input"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder={t(I18N.profile_name_placeholder, lang)}
+            maxLength={100} />
+        </div>
+      </div>
+
+      <div className="settings-card">
+        <div className="settings-card-header">
+          <div>
+            <h3 className="settings-card-title">{t(I18N.profile_display_name_label, lang)}</h3>
+            <p className="settings-card-desc">{t(I18N.profile_display_name_help, lang)}</p>
+          </div>
+        </div>
+        <div className="settings-card-body">
+          <input
+            className="field-input"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            placeholder={t(I18N.profile_display_name_placeholder, lang)}
+            maxLength={100} />
+        </div>
+      </div>
+
+      <div className="settings-card">
+        <div className="settings-card-header">
+          <div>
+            <h3 className="settings-card-title">{t(I18N.profile_email_label, lang)}</h3>
+            <p className="settings-card-desc">{t(I18N.profile_email_help, lang)}</p>
+          </div>
+        </div>
+        <div className="settings-card-body">
+          <input
+            className="field-input"
+            type="email"
+            value={user.email || ''}
+            disabled
+            readOnly
+            style={{ opacity: 0.6, cursor: 'not-allowed' }} />
+        </div>
+      </div>
+
+      {/* Save bar */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'flex-end',
+        gap: 12,
+        marginTop: 4,
+      }}>
+        {status &&
+          <span
+            role="status"
+            style={{
+              fontSize: 12.5,
+              color: status === t(I18N.saved, lang) ? 'var(--positive)' : 'var(--negative)',
+              fontWeight: 500,
+            }}>
+            {status}
+          </span>
+        }
+        <button
+          className="btn btn-accent"
+          onClick={handleSave}
+          disabled={!dirty || saving}
+          style={{ opacity: (!dirty || saving) ? 0.5 : 1 }}>
+          {Ic.check}{saving ? t(I18N.saving, lang) : t(I18N.save, lang)}
+        </button>
+      </div>
+
+      {/* Danger Zone */}
+      <div className="danger-zone">
+        <div className="danger-zone-head">
+          {SIc.warn}
+          <h3 className="danger-zone-title">{t(I18N.danger_zone_title, lang)}</h3>
+        </div>
+        <div className="danger-zone-row">
+          <div>
+            <p className="danger-zone-row-title">{t(I18N.delete_account_label, lang)}</p>
+            <p className="danger-zone-row-desc">{t(I18N.delete_account_desc, lang)}</p>
+          </div>
+          <button
+            className="danger-zone-action"
+            onClick={onOpenDeleteModal}>
+            {SIc.trash}
+            {t(I18N.delete_account_btn, lang)}
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ── Appearance section ───────────────────────────────────────
+// Hooks straight into the tweaks state from app.jsx — every change is
+// live-saved by the existing useEffect there (no extra fetch needed).
+function SettingsAppearanceSection({ lang, tw, setTweak }) {
+  return (
+    <section className="settings-section">
+      <div className="settings-section-head">
+        <h2 className="settings-section-title">{t(I18N.appearance_section_title, lang)}</h2>
+        <p className="settings-section-sub">{t(I18N.appearance_section_sub, lang)}</p>
+      </div>
+
+      {/* Accent color swatches */}
+      <div className="settings-card">
+        <div className="settings-card-header">
+          <div>
+            <h3 className="settings-card-title">{t(I18N.appearance_accent, lang)}</h3>
+            <p className="settings-card-desc">{t(I18N.appearance_accent_desc, lang)}</p>
+          </div>
+        </div>
+        <div className="settings-card-body">
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+            {SETTINGS_ACCENT_OPTIONS.map((color) => {
+              const active = (tw.accent || '').toLowerCase() === color.toLowerCase();
+              return (
+                <button
+                  key={color}
+                  type="button"
+                  onClick={() => setTweak('accent', color)}
+                  title={color}
+                  aria-label={color}
+                  aria-pressed={active}
+                  style={{
+                    width: 44, height: 44,
+                    borderRadius: 12,
+                    background: color,
+                    border: active ? '2px solid var(--ink)' : '2px solid var(--border)',
+                    cursor: 'pointer',
+                    transition: 'transform 160ms ease, box-shadow 160ms ease',
+                    boxShadow: active ? `0 0 0 2px var(--bg), 0 0 0 4px ${color}` : 'none',
+                    padding: 0,
+                  }} />
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* Density / Lang / Currency / Ambient — each as toggle rows in 1 card */}
+      <div className="settings-card">
+        <div className="settings-card-header">
+          <div>
+            <h3 className="settings-card-title">{t(I18N.appearance_density, lang)}</h3>
+            <p className="settings-card-desc">{t(I18N.appearance_density_desc, lang)}</p>
+          </div>
+        </div>
+        <div className="settings-card-body">
+          <div className="seg" style={{ maxWidth: 320 }}>
+            <button
+              className={tw.density === 'regular' ? 'active' : ''}
+              onClick={() => setTweak('density', 'regular')}>
+              {t(I18N.appearance_density_regular, lang)}
+            </button>
+            <button
+              className={tw.density === 'compact' ? 'active' : ''}
+              onClick={() => setTweak('density', 'compact')}>
+              {t(I18N.appearance_density_compact, lang)}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="settings-card">
+        <div className="settings-card-row">
+          <div>
+            <p className="settings-card-row-title">{t(I18N.appearance_ambient, lang)}</p>
+            <p className="settings-card-row-desc">{t(I18N.appearance_ambient_desc, lang)}</p>
+          </div>
+          <label className="toggle-switch">
+            <input
+              type="checkbox"
+              checked={!!tw.showAmbient}
+              onChange={(e) => setTweak('showAmbient', e.target.checked)} />
+            <span className="toggle-switch-slider">
+              <span className="toggle-switch-knob"></span>
+            </span>
+          </label>
+        </div>
+      </div>
+
+      <div className="settings-card">
+        <div className="settings-card-header">
+          <div>
+            <h3 className="settings-card-title">{t(I18N.appearance_lang, lang)}</h3>
+            <p className="settings-card-desc">{t(I18N.appearance_lang_desc, lang)}</p>
+          </div>
+        </div>
+        <div className="settings-card-body">
+          <div className="seg" style={{ maxWidth: 320 }}>
+            <button
+              className={tw.lang === 'th' ? 'active' : ''}
+              onClick={() => setTweak('lang', 'th')}>
+              ภาษาไทย
+            </button>
+            <button
+              className={tw.lang === 'en' ? 'active' : ''}
+              onClick={() => setTweak('lang', 'en')}>
+              English
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="settings-card">
+        <div className="settings-card-header">
+          <div>
+            <h3 className="settings-card-title">{t(I18N.appearance_currency, lang)}</h3>
+            <p className="settings-card-desc">{t(I18N.appearance_currency_desc, lang)}</p>
+          </div>
+        </div>
+        <div className="settings-card-body">
+          <div className="seg" style={{ maxWidth: 320 }}>
+            <button
+              className={tw.currency === 'THB' ? 'active' : ''}
+              onClick={() => setTweak('currency', 'THB')}>
+              THB (฿)
+            </button>
+            <button
+              className={tw.currency === 'USD' ? 'active' : ''}
+              onClick={() => setTweak('currency', 'USD')}>
+              USD ($)
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ── LINE section ─────────────────────────────────────────────
+// Fetches /api/line/status on mount + after unlink so the UI reflects
+// the latest server state. QR image is served by Flask from ux_ui/assets.
+function SettingsLineSection({ user, lang }) {
+  const [status, setStatus] = useState(null); // null = loading, {linked, ...}
+  const [unlinking, setUnlinking] = useState(false);
+  const [toast, setToast] = useState('');
+
+  const fetchStatus = async () => {
+    if (!user || !user.id) return;
+    try {
+      const r = await fetch('/api/line/status?user_id=' + user.id);
+      if (r.ok) {
+        const j = await r.json();
+        setStatus(j);
+      } else {
+        setStatus({ linked: false });
+      }
+    } catch (err) {
+      console.error('[SettingsLine] fetch failed', err);
+      setStatus({ linked: false });
+    }
+  };
+
+  useEffect(() => {
+    fetchStatus();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user && user.id]);
+
+  const handleUnlink = async () => {
+    if (unlinking) return;
+    if (!window.confirm(t(I18N.line_unlink_confirm, lang))) return;
+    setUnlinking(true);
+    try {
+      const r = await fetch('/api/line/unlink', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: user.id }),
+      });
+      if (r.ok) {
+        setToast(t(I18N.line_unlink_success, lang));
+        await fetchStatus();
+      } else {
+        setToast(t(I18N.line_unlink_failed, lang));
+      }
+    } catch (err) {
+      console.error('[SettingsLine] unlink failed', err);
+      setToast(t(I18N.line_unlink_failed, lang));
+    } finally {
+      setUnlinking(false);
+      setTimeout(() => setToast(''), 3000);
+    }
+  };
+
+  return (
+    <section className="settings-section">
+      <div className="settings-section-head">
+        <h2 className="settings-section-title">{t(I18N.line_section_title, lang)}</h2>
+        <p className="settings-section-sub">{t(I18N.line_section_sub, lang)}</p>
+      </div>
+
+      {status === null &&
+        <div className="settings-card" style={{ textAlign: 'center', color: 'var(--ink-subtle)', fontSize: 13 }}>
+          {t(I18N.line_loading, lang)}
+        </div>
+      }
+
+      {status && status.linked &&
+        <div className="settings-card">
+          <div className="settings-card-header">
+            <div>
+              <h3 className="settings-card-title">{t(I18N.line_linked_label, lang)}</h3>
+              <p className="settings-card-desc">
+                {status.display_name || (lang === 'th' ? 'บัญชี LINE' : 'LINE account')}
+                {status.linked_at &&
+                  <> · {t(I18N.line_linked_since, lang)} {new Date(status.linked_at).toLocaleDateString(lang === 'th' ? 'th-TH' : 'en-US')}</>}
+              </p>
+            </div>
+            <button
+              className="danger-zone-action"
+              onClick={handleUnlink}
+              disabled={unlinking}
+              style={{ opacity: unlinking ? 0.6 : 1 }}>
+              {t(I18N.line_unlink_btn, lang)}
+            </button>
+          </div>
+        </div>
+      }
+
+      {status && !status.linked &&
+        <div className="settings-card qr-card">
+          <h3 className="settings-card-title">{t(I18N.line_qr_title, lang)}</h3>
+          <div className="qr-card-image">
+            <img
+              src="/ui/assets/line-qr.png"
+              alt="LINE QR"
+              onError={(e) => {
+                // Graceful fallback when asset is missing — show placeholder text
+                e.currentTarget.style.display = 'none';
+                if (e.currentTarget.nextSibling) e.currentTarget.nextSibling.style.display = 'flex';
+              }} />
+            <div
+              style={{
+                display: 'none',
+                width: '100%', height: '100%',
+                alignItems: 'center', justifyContent: 'center',
+                fontFamily: 'var(--mono)', fontSize: 11,
+                color: '#999', textAlign: 'center', padding: 16,
+                lineHeight: 1.5,
+              }}>
+              LINE QR<br/>
+              (asset placeholder)
+            </div>
+          </div>
+          <div className="qr-card-instructions">
+            <ol>
+              <li>{t(I18N.line_qr_step1, lang)}</li>
+              <li>{t(I18N.line_qr_step2, lang)}</li>
+              <li>
+                {lang === 'th' ? (
+                  <>พิมพ์ <code style={{ background: 'var(--surface-strong)', padding: '2px 6px', borderRadius: 4, fontFamily: 'var(--mono)', fontSize: 12 }}>{user.email}</code> ในแชท</>
+                ) : (
+                  <>Send <code style={{ background: 'var(--surface-strong)', padding: '2px 6px', borderRadius: 4, fontFamily: 'var(--mono)', fontSize: 12 }}>{user.email}</code> in chat</>
+                )}
+              </li>
+            </ol>
+          </div>
+        </div>
+      }
+
+      {toast &&
+        <div
+          role="status"
+          style={{
+            padding: '10px 14px',
+            background: 'var(--accent-soft)',
+            border: '1px solid var(--accent)',
+            borderRadius: 10,
+            fontSize: 13,
+            color: 'var(--ink)',
+            textAlign: 'center',
+          }}>
+          {toast}
+        </div>
+      }
+    </section>
+  );
+}
+
+// ── Notifications section ────────────────────────────────────
+// Reads + writes to /api/preferences/<id> with camelCase keys.
+// Live-saves on toggle (no Save button) — debounced is overkill for a
+// 2-flag form, just fire the PUT directly.
+function SettingsNotificationsSection({ user, lang }) {
+  const [budgetAlert, setBudgetAlert] = useState(true);
+  const [lineNotify, setLineNotify] = useState(true);
+  const [lineLinked, setLineLinked] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+
+  // Load prefs + line status on mount
+  useEffect(() => {
+    if (!user || !user.id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [pRes, lRes] = await Promise.all([
+          fetch('/api/preferences/' + user.id),
+          fetch('/api/line/status?user_id=' + user.id),
+        ]);
+        if (cancelled) return;
+        if (pRes.ok) {
+          const p = await pRes.json();
+          if (typeof p.budgetAlertEnabled === 'boolean') setBudgetAlert(p.budgetAlertEnabled);
+          if (typeof p.lineNotifyEnabled === 'boolean') setLineNotify(p.lineNotifyEnabled);
+        }
+        if (lRes.ok) {
+          const j = await lRes.json();
+          setLineLinked(!!j.linked);
+        }
+      } catch (err) {
+        console.error('[SettingsNotif] load failed', err);
+      } finally {
+        if (!cancelled) setLoaded(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user && user.id]);
+
+  const persist = async (patch) => {
+    if (!user || !user.id) return;
+    try {
+      await fetch('/api/preferences/' + user.id, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+    } catch (err) {
+      console.error('[SettingsNotif] persist failed', err);
+    }
+  };
+
+  const handleBudget = (val) => {
+    setBudgetAlert(val);
+    persist({ budgetAlertEnabled: val });
+  };
+  const handleLine = (val) => {
+    if (!lineLinked) return;
+    setLineNotify(val);
+    persist({ lineNotifyEnabled: val });
+  };
+
+  return (
+    <section className="settings-section">
+      <div className="settings-section-head">
+        <h2 className="settings-section-title">{t(I18N.notifications_section_title, lang)}</h2>
+        <p className="settings-section-sub">{t(I18N.notifications_section_sub, lang)}</p>
+      </div>
+
+      <div className="settings-card">
+        <div className="settings-card-row">
+          <div>
+            <p className="settings-card-row-title">{t(I18N.notif_budget_alert_label, lang)}</p>
+            <p className="settings-card-row-desc">{t(I18N.notif_budget_alert_desc, lang)}</p>
+          </div>
+          <label className="toggle-switch">
+            <input
+              type="checkbox"
+              checked={budgetAlert}
+              disabled={!loaded}
+              onChange={(e) => handleBudget(e.target.checked)} />
+            <span className="toggle-switch-slider">
+              <span className="toggle-switch-knob"></span>
+            </span>
+          </label>
+        </div>
+
+        <div className="settings-card-row">
+          <div>
+            <p className="settings-card-row-title">{t(I18N.notif_line_label, lang)}</p>
+            <p className="settings-card-row-desc">
+              {lineLinked
+                ? t(I18N.notif_line_desc, lang)
+                : t(I18N.notif_line_needs_link, lang)}
+            </p>
+          </div>
+          <label className="toggle-switch">
+            <input
+              type="checkbox"
+              checked={lineNotify && lineLinked}
+              disabled={!loaded || !lineLinked}
+              onChange={(e) => handleLine(e.target.checked)} />
+            <span className="toggle-switch-slider">
+              <span className="toggle-switch-knob"></span>
+            </span>
+          </label>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// DeleteAccountModal — 3-step destructive confirmation
+// Steps:
+//   1. Show what will be deleted + CSV export link + "I understand" button
+//   2. Type literal "DELETE" (case-sensitive — backend validates)
+//   3. Type the account email (case-insensitive match per backend)
+// On Step 3 submit → DELETE /api/users/<id> → toast + logout.
+// ─────────────────────────────────────────────────────────────
+function DeleteAccountModal({ user, lang, onClose, onConfirm }) {
+  const [step, setStep] = useState(1);
+  const [deleteText, setDeleteText] = useState('');
+  const [emailInput, setEmailInput] = useState('');
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape' && !submitting) onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose, submitting]);
+
+  const canStep2Continue = deleteText === 'DELETE';
+  const canStep3Submit = emailInput.trim().toLowerCase() === (user.email || '').toLowerCase();
+
+  const goNext = () => {
+    setError('');
+    if (step === 1) setStep(2);
+    else if (step === 2 && canStep2Continue) setStep(3);
+  };
+
+  const goBack = () => {
+    setError('');
+    if (step > 1) setStep(step - 1);
+  };
+
+  const submit = async () => {
+    if (!canStep3Submit || submitting) return;
+    setError('');
+    setSubmitting(true);
+    const r = await onConfirm(deleteText, emailInput.trim());
+    setSubmitting(false);
+    if (r && r.ok) {
+      // App-level onConfirm handles toast + logout — modal will unmount.
+      return;
+    }
+    // Map backend error codes to specific i18n messages
+    if (r && r.errorCode === 'confirm_text_invalid') {
+      setError(t(I18N.delete_error_text, lang));
+      setStep(2);
+      setDeleteText('');
+    } else if (r && r.errorCode === 'email_mismatch') {
+      setError(t(I18N.delete_error_email, lang));
+    } else {
+      setError(t(I18N.delete_error_generic, lang));
+    }
+  };
+
+  return (
+    <div className="delete-modal-overlay" onClick={submitting ? undefined : onClose}>
+      <div className="delete-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="delete-modal-head">
+          <div className="step-indicator">
+            <span className={`step-indicator-pill ${step >= 1 ? 'done' : ''} ${step === 1 ? 'current' : ''}`}/>
+            <span className={`step-indicator-pill ${step >= 2 ? 'done' : ''} ${step === 2 ? 'current' : ''}`}/>
+            <span className={`step-indicator-pill ${step >= 3 ? 'done' : ''} ${step === 3 ? 'current' : ''}`}/>
+            <span className="step-indicator-label">
+              {t(I18N.delete_step_label, lang).replace('{n}', step)}
+            </span>
+          </div>
+          <h2 className="delete-modal-title">
+            {lang === 'th' ?
+              <>ลบ <em>บัญชี</em>?</> :
+              <>Delete <em>account</em>?</>}
+          </h2>
+        </div>
+
+        <div className="step-content">
+          {/* Step 1 — warning + CSV */}
+          {step === 1 && <>
+            <div className="step-warning-box">
+              {SIc.warn}
+              <p>{t(I18N.delete_step1_warn_head, lang)}</p>
+            </div>
+            <ul className="step-list">
+              <li>{t(I18N.delete_step1_item_1, lang)}</li>
+              <li>{t(I18N.delete_step1_item_2, lang)}</li>
+              <li>{t(I18N.delete_step1_item_3, lang)}</li>
+            </ul>
+            <a
+              href={`/api/users/${user.id}/export-csv`}
+              download={`moneymind-${user.id}.csv`}
+              className="btn"
+              style={{
+                alignSelf: 'flex-start',
+                marginTop: 4,
+                textDecoration: 'none',
+                color: 'var(--ink)',
+              }}>
+              {SIc.download}
+              {t(I18N.delete_step1_export_csv, lang)}
+            </a>
+          </>}
+
+          {/* Step 2 — type DELETE */}
+          {step === 2 && <>
+            <p><strong>{t(I18N.delete_step2_prompt, lang)}</strong></p>
+            <p>{t(I18N.delete_step2_help, lang)}</p>
+            <div className="field">
+              <input
+                className="field-input"
+                value={deleteText}
+                onChange={(e) => { setDeleteText(e.target.value); if (error) setError(''); }}
+                placeholder={t(I18N.delete_step2_placeholder, lang)}
+                autoFocus
+                style={{
+                  fontFamily: 'var(--mono)',
+                  letterSpacing: 2,
+                  textTransform: 'none',
+                }} />
+            </div>
+          </>}
+
+          {/* Step 3 — email verify */}
+          {step === 3 && <>
+            <p>
+              {lang === 'th'
+                ? <>{t(I18N.delete_step3_prompt, lang)}: <strong style={{ fontFamily: 'var(--mono)', fontSize: 13 }}>{user.email}</strong></>
+                : <>{t(I18N.delete_step3_prompt, lang)}: <strong style={{ fontFamily: 'var(--mono)', fontSize: 13 }}>{user.email}</strong></>}
+            </p>
+            <p>{t(I18N.delete_step3_help, lang)}</p>
+            <div className="field">
+              <input
+                className="field-input"
+                type="email"
+                value={emailInput}
+                onChange={(e) => { setEmailInput(e.target.value); if (error) setError(''); }}
+                placeholder={t(I18N.delete_step3_placeholder, lang)}
+                autoFocus
+                style={{ fontFamily: 'var(--mono)' }} />
+            </div>
+          </>}
+
+          {error &&
+            <div className="auth-error" style={{ marginTop: 4 }}>
+              {error}
+            </div>
+          }
+        </div>
+
+        <div className="step-actions">
+          {step === 1 && <>
+            <button className="btn" onClick={onClose} disabled={submitting}>
+              {t(I18N.delete_cancel, lang)}
+            </button>
+            <button className="modal-btn-danger" onClick={goNext} disabled={submitting}>
+              {t(I18N.delete_step1_continue, lang)}
+            </button>
+          </>}
+
+          {step === 2 && <>
+            <button className="btn" onClick={goBack} disabled={submitting}>
+              {t(I18N.delete_back, lang)}
+            </button>
+            <button
+              className="modal-btn-danger"
+              onClick={goNext}
+              disabled={!canStep2Continue || submitting}>
+              {t(I18N.delete_step2_next, lang)}
+            </button>
+          </>}
+
+          {step === 3 && <>
+            <button className="btn" onClick={goBack} disabled={submitting}>
+              {t(I18N.delete_back, lang)}
+            </button>
+            <button
+              className="modal-btn-danger"
+              onClick={submit}
+              disabled={!canStep3Submit || submitting}
+              style={{ opacity: submitting ? 0.6 : 1 }}>
+              {SIc.trash}
+              {submitting ? t(I18N.delete_step3_submitting, lang) : t(I18N.delete_step3_submit, lang)}
+            </button>
+          </>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// CancelDeleteBanner — sticky yellow banner shown on every screen
+// while the user has a delete scheduled.
+// Renders nothing if no delete pending. Days field is sourced from
+// login response → user.days_until_delete (backend-computed).
+// ─────────────────────────────────────────────────────────────
+function CancelDeleteBanner({ user, lang, onCancel }) {
+  const [cancelling, setCancelling] = useState(false);
+  const [toast, setToast] = useState('');
+
+  if (!user || !user.delete_scheduled_at) return null;
+  const days = typeof user.days_until_delete === 'number' ? user.days_until_delete : null;
+
+  const handleCancel = async () => {
+    if (cancelling) return;
+    setCancelling(true);
+    const r = await onCancel();
+    setCancelling(false);
+    if (r && r.ok) {
+      setToast(t(I18N.banner_cancel_success, lang));
+      // Banner will unmount once user.delete_scheduled_at is cleared in app.jsx
+    } else {
+      setToast(t(I18N.banner_cancel_failed, lang));
+      setTimeout(() => setToast(''), 3000);
+    }
+  };
+
+  const headline = days === 0
+    ? t(I18N.banner_days_today, lang)
+    : t(I18N.banner_days_until_delete, lang).replace('{n}', days != null ? days : '?');
+
+  return (
+    <div className="cancel-delete-banner">
+      <span className="banner-icon">{SIc.warn}</span>
+      <div className="banner-text">
+        {headline}
+        <span className="banner-text-sub">
+          {toast || t(I18N.banner_sub, lang)}
+        </span>
+      </div>
+      <button
+        className="banner-cancel-btn"
+        onClick={handleCancel}
+        disabled={cancelling}
+        style={{ opacity: cancelling ? 0.6 : 1 }}>
+        {t(I18N.banner_cancel_btn, lang)}
+      </button>
     </div>
   );
 }
