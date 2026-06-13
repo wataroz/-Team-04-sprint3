@@ -955,11 +955,18 @@ def api_set_prefs(user_id: int):
             # silently flip the flag the wrong way.
             ("budgetAlertEnabled", "budget_alert_enabled"),
             ("lineNotifyEnabled", "line_notify_enabled"),
+            # Light/dark theme (post-Sprint 5). Whitelisted strictly so a
+            # buggy / malicious client can't smuggle an arbitrary value into
+            # a CSS selector or class name down the line.
+            ("theme", "theme"),
         ]:
             if key in body:
                 val = body[key]
                 if attr in ("budget_alert_enabled", "line_notify_enabled"):
                     val = bool(val)
+                if attr == "theme":
+                    if val not in ("light", "dark"):
+                        return jsonify({"error": "theme must be 'light' or 'dark'"}), 400
                 setattr(p, attr, val)
         db.commit()
         db.refresh(p)

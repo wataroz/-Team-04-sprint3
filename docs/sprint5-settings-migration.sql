@@ -18,6 +18,7 @@
 --           sqlite3 data/moneymind.db
 --           ALTER TABLE preferences ADD COLUMN budget_alert_enabled BOOLEAN DEFAULT 1;
 --           ALTER TABLE preferences ADD COLUMN line_notify_enabled BOOLEAN DEFAULT 1;
+--           ALTER TABLE preferences ADD COLUMN theme VARCHAR(16) NOT NULL DEFAULT 'light';
 --           ALTER TABLE users ADD COLUMN display_name VARCHAR(100);
 --           ALTER TABLE users ADD COLUMN delete_scheduled_at DATETIME;
 --           CREATE INDEX idx_users_delete_scheduled ON users(delete_scheduled_at);
@@ -25,6 +26,11 @@
 -- ─── Preference: notification toggles ──────────────────────────────────────
 ALTER TABLE preferences ADD COLUMN IF NOT EXISTS budget_alert_enabled BOOLEAN DEFAULT TRUE;
 ALTER TABLE preferences ADD COLUMN IF NOT EXISTS line_notify_enabled BOOLEAN DEFAULT TRUE;
+
+-- ─── Preference: light/dark theme (post-Sprint 5 brand refresh) ──────────
+-- Default 'light' to match the cream logo background. Users can toggle from
+-- Settings → Appearance; choice follows them across devices.
+ALTER TABLE preferences ADD COLUMN IF NOT EXISTS theme VARCHAR(16) NOT NULL DEFAULT 'light';
 
 -- ─── User: display name + grace period delete ─────────────────────────────
 ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name VARCHAR(100);

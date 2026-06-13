@@ -66,6 +66,14 @@ _STATEMENTS: list[tuple[str, str]] = [
         "CREATE INDEX IF NOT EXISTS idx_users_delete_scheduled "
         "ON users(delete_scheduled_at) WHERE delete_scheduled_at IS NOT NULL;",
     ),
+    # Post-Sprint 5 brand refresh — light/dark theme toggle. Default 'light'
+    # to match the cream logo background so existing users see the new
+    # default the first time they hit Settings → Appearance.
+    (
+        "preferences.theme",
+        "ALTER TABLE preferences ADD COLUMN IF NOT EXISTS "
+        "theme VARCHAR(16) NOT NULL DEFAULT 'light';",
+    ),
 ]
 
 

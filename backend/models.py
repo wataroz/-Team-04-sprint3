@@ -162,6 +162,11 @@ class Preference(Base):
     # current users; they can opt out from Settings → Notifications.
     budget_alert_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     line_notify_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # Light/dark theme preference (post-Sprint 5 brand refresh). Default
+    # "light" to match the cream logo background; users can toggle from
+    # Settings → Appearance. Stored server-side so the choice follows the
+    # user across devices/sessions.
+    theme: Mapped[str] = mapped_column(String(16), default="light", nullable=False)
 
     user: Mapped[User] = relationship(back_populates="preference")
 
@@ -175,6 +180,7 @@ class Preference(Base):
             "categoryBudgets": self.category_budgets or {},
             "budgetAlertEnabled": bool(self.budget_alert_enabled),
             "lineNotifyEnabled": bool(self.line_notify_enabled),
+            "theme": self.theme or "light",
         }
 
 
