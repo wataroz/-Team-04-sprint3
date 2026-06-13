@@ -227,9 +227,15 @@ def api_login():
         # NOTE: we intentionally do NOT block login when delete_scheduled_at is
         # set — the user must be able to sign in to hit "Cancel delete". The
         # grace-period UI is the frontend's responsibility (banner + countdown).
-        return jsonify(_user_payload(user))
+        payload = _user_payload(user)
     finally:
         db.close()
+
+    # Lazy grace-period cleanup — รันหลังปิด DB session ของ login เพื่อกัน
+    # lock contention. _maybe_run_auto_cleanup() self-throttle (วันละครั้ง)
+    # และ swallow exception ภายใน → login ของ user ไม่พังแน่นอน.
+    _maybe_run_auto_cleanup()
+    return jsonify(payload)
 
 
 # ─── User Settings (Sprint 5) ────────────────────────────────────────────────
@@ -1230,6 +1236,47 @@ def _run_grace_period_cleanup() -> int:
         raise
     finally:
         db.close()
+
+
+# ─── Lazy grace-period cleanup ───────────────────────────────────────────────
+# แทนที่จะใช้ external cron (cron-job.org / GitHub Actions / Render Cron)
+# เราใช้ pattern "ลบเมื่อมีคน login ครั้งแรกของวัน" — zero external dep.
+# Trade-off: ถ้าไม่มีใคร login เลย 30+ วัน → cleanup ไม่ทำงาน
+# (acceptable สำหรับ demo/staging — production ควรพิจารณา external cron)
+#
+# Multi-worker note: Render รัน gunicorn --workers 2 → _LAST_AUTO_CLEANUP
+# เป็น per-process state ไม่ shared ระหว่าง workers. Worst case อาจรัน
+# cleanup 2 ครั้ง/วัน (1 ครั้งต่อ worker). DELETE query ใน
+# _run_grace_period_cleanup() เป็น idempotent (filter
+# delete_scheduled_at < utcnow()) → รันซ้ำไม่พัง ไม่ผลิตข้อมูลซ้ำ.
+
+# Lazy cleanup throttle — รันได้สูงสุดวันละ 1 ครั้ง (per worker process)
+_LAST_AUTO_CLEANUP: datetime | None = None
+_AUTO_CLEANUP_INTERVAL = timedelta(hours=24)
+
+
+def _maybe_run_auto_cleanup() -> None:
+    """รัน grace cleanup อัตโนมัติ — throttle 24 ชม.
+
+    เรียกจาก /api/auth/login (และ endpoint อื่นที่เหมาะสมในอนาคต).
+    Non-blocking: ถ้า cleanup error → log + continue (ไม่ raise)
+    Idempotent: ถ้ารันแล้วใน 24 ชม. → skip
+    """
+    global _LAST_AUTO_CLEANUP
+    now = datetime.utcnow()
+    if _LAST_AUTO_CLEANUP and (now - _LAST_AUTO_CLEANUP) < _AUTO_CLEANUP_INTERVAL:
+        return  # รันแล้วใน 24 ชม. → skip
+    # Update timestamp ก่อนรัน → กัน race condition (multiple threads ใน
+    # process เดียวกันเรียกพร้อมกัน). ถ้า cleanup fail timestamp ยัง update
+    # แล้ว → จะ retry อีก 24 ชม. ข้างหน้า (admin endpoint ใช้ debug ได้ทันที)
+    _LAST_AUTO_CLEANUP = now
+    try:
+        deleted = _run_grace_period_cleanup()
+        if deleted:
+            log.info("lazy cleanup: hard-deleted %d expired user(s)", deleted)
+    except Exception:
+        log.exception("lazy cleanup failed (non-blocking)")
+        # ไม่ raise — login ของ user ต้องสำเร็จเสมอ
 
 
 @app.route("/api/admin/run-grace-cleanup", methods=["POST"])
