@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 660 780" width="660" height="780">
+  <!-- MoneyMind — Full lockup, slimmer Didot-style M -->
+
+  <defs>
+    <style>
+      .serif-dark {
+        fill: #14141A;
+        font-family: 'Playfair Display', 'Times New Roman', Georgia, serif;
+        font-weight: 700;
+      }
+      .mark-slim {
+        fill: #14141A;
+        font-family: 'Playfair Display', 'Times New Roman', Georgia, serif;
+        font-weight: 400;
+      }
+      .since {
+        fill: #B8975A;
+        font-family: 'Inter', 'Helvetica Neue', sans-serif;
+        font-weight: 500;
+      }
+    </style>
+  </defs>
+
+  <g transform="translate(330 280)">
+
+    <!-- Cream rounded frame -->
+    <rect x="-160" y="-160" width="320" height="320" rx="56" ry="56"
+          fill="#F5EFE3"/>
+
+    <!-- Dark outline ring -->
+    <rect x="-144" y="-144" width="288" height="288" rx="46" ry="46"
+          fill="none" stroke="#14141A" stroke-width="5"/>
+
+    <!-- Inner gold hairline -->
+    <rect x="-130" y="-130" width="260" height="260" rx="36" ry="36"
+          fill="none" stroke="#D4B978" stroke-width="2"/>
+
+    <!-- Slim serif M -->
+    <text class="mark-slim" x="0" y="76" text-anchor="middle" font-size="220">
+      M
+    </text>
+
+  </g>
+
+  <!-- Wordmark -->
+  <text class="serif-dark" x="330" y="600" text-anchor="middle"
+        font-size="60" letter-spacing="6">
+    MONEYMIND
+  </text>
+
+  <!-- Gold hairline -->
+  <line x1="220" y1="630" x2="440" y2="630"
+        stroke="#B8975A" stroke-width="1" opacity="0.8"/>
+
+  <!-- SINCE 2026 -->
+  <text class="since" x="330" y="668" text-anchor="middle"
+        font-size="22" letter-spacing="10">
+    SINCE&#160;&#160;2026
+  </text>
+
+</svg>

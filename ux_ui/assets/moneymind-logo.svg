@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- MoneyMind — Classic emblem, slimmer Didot-style M -->
+
+  <defs>
+    <style>
+      .mark {
+        fill: #14141A;
+        font-family: 'Playfair Display', 'Times New Roman', Georgia, serif;
+        font-weight: 400;
+      }
+    </style>
+  </defs>
+
+  <!-- Cream rounded frame -->
+  <rect x="56" y="56" width="400" height="400" rx="72" ry="72"
+        fill="#F5EFE3"/>
+
+  <!-- Black outline ring -->
+  <rect x="76" y="76" width="360" height="360" rx="60" ry="60"
+        fill="none" stroke="#14141A" stroke-width="6"/>
+
+  <!-- Inner gold hairline -->
+  <rect x="92" y="92" width="328" height="328" rx="48" ry="48"
+        fill="none" stroke="#D4B978" stroke-width="2"/>
+
+  <!-- Slim serif M — font-weight 400 (regular) instead of 700 (bold) -->
+  <text class="mark" x="256" y="320" text-anchor="middle" font-size="240">
+    M
+  </text>
+
+</svg>
