@@ -2207,8 +2207,10 @@ body::after {
 }
 
 @keyframes pageIn {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
+  /* opacity-only fade — keep keyframe free of transform so .page-enter
+     never becomes a containing block (which would clip position:fixed modals) */
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 /* ---------- Misc ---------- */
