@@ -4167,6 +4167,45 @@ html, body {
   .settings-section-title { font-size: 26px !important; }
 }
 
+/* Settings tabs — Tablet grid 4x1 (481-1024px)
+   iPad Mini (768) / iPad Air (820) / iPad Pro 11" (834) etc.
+   เห็นครบ 4 tab แนวนอนจอเดียว ไม่ต้อง scroll
+   Override horizontal scroll + edge fade จาก block 1024px ด้านบน
+   (User report: iPad Air 820px เห็นแค่ tab เดียว เพราะไม่รู้ว่า scroll ได้) */
+@media (min-width: 481px) and (max-width: 1024px) {
+  .settings-sidebar {
+    display: grid !important;
+    grid-template-columns: repeat(4, 1fr) !important;
+    gap: 10px !important;
+    padding: 10px !important;
+    overflow-x: visible !important;
+    overflow-y: visible !important;
+    -webkit-mask-image: none !important;
+            mask-image: none !important;
+  }
+
+  /* คง .settings-sidebar-label ซ่อนต่อจาก block 1024px
+     (label "การตั้งค่า" เป็น sibling ของ tab buttons ไม่ใช่ label ในแต่ละ tab
+     — ถ้าแสดงจะกิน grid cell แรกทำให้ tab ที่ 4 ตกแถวล่าง) */
+  .settings-sidebar-label { display: none !important; }
+
+  .settings-tab {
+    /* Tile shape — icon บน label ล่าง, จัดกึ่งกลาง grid cell */
+    flex-direction: column !important;
+    justify-content: center !important;
+    align-items: center !important;
+    text-align: center !important;
+    gap: 8px !important;
+    padding: 14px 10px !important;
+    font-size: 14px !important;
+    min-height: 64px;
+    width: 100% !important;
+    min-width: 0 !important;
+    flex: 1 1 auto !important;
+  }
+  .settings-tab svg { width: 20px !important; height: 20px !important; }
+}
+
 @media (max-width: 768px) {
   .settings-card { padding: 18px !important; gap: 14px !important; }
   .settings-card-header { flex-wrap: wrap; gap: 12px !important; }
