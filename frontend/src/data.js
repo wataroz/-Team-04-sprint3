@@ -319,6 +319,11 @@ const I18N = {
   notif_line_desc:           { th: 'ส่งข้อความเตือนงบประมาณผ่าน LINE Bot',         en: 'Send budget alerts as LINE messages.' },
   notif_line_needs_link:     { th: 'ต้องเชื่อมบัญชี LINE ก่อนใช้งาน',                en: 'Link your LINE account first to enable.' },
 
+  // Logout (Settings > Profile — for mobile users; desktop has sidebar footer)
+  settings_logout_title:     { th: 'ออกจากระบบ',                                   en: 'Sign out' },
+  settings_logout_desc:      { th: 'ออกจากบัญชีนี้ในอุปกรณ์ปัจจุบัน — ข้อมูลของคุณยังอยู่ปลอดภัย', en: 'Sign out of this device — your data remains safe' },
+  settings_logout_btn:       { th: 'ออกจากระบบ',                                   en: 'Sign out' },
+
   // Danger Zone
   danger_zone_title:         { th: 'พื้นที่อันตราย',                                en: 'Danger Zone' },
   delete_account_label:      { th: 'ลบบัญชี',                                     en: 'Delete account' },

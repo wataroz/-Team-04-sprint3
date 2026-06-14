@@ -2300,7 +2300,7 @@ const SETTINGS_ACCENT_OPTIONS = [
   '#E5A55C', // Warm amber
 ];
 
-function SettingsView({ user, lang, tw, setTweak, onPatchUser, onOpenDeleteModal, onSetUser, onBack }) {
+function SettingsView({ user, lang, tw, setTweak, onPatchUser, onOpenDeleteModal, onSetUser, onBack, onLogout }) {
   const [activeTab, setActiveTab] = useState('profile');
   const contentRef = useRef(null);
 
@@ -2373,7 +2373,8 @@ function SettingsView({ user, lang, tw, setTweak, onPatchUser, onOpenDeleteModal
               user={user}
               lang={lang}
               onPatchUser={onPatchUser}
-              onOpenDeleteModal={onOpenDeleteModal} />
+              onOpenDeleteModal={onOpenDeleteModal}
+              onLogout={onLogout} />
           }
           {activeTab === 'appearance' &&
             <SettingsAppearanceSection
@@ -2401,7 +2402,7 @@ function SettingsView({ user, lang, tw, setTweak, onPatchUser, onOpenDeleteModal
 // Local state mirror so the user can type without Save being blocked by
 // pristine state. We diff against the props on Save so re-clicking is a
 // no-op for unchanged fields (backend ignores 400-on-empty by skipping).
-function SettingsProfileSection({ user, lang, onPatchUser, onOpenDeleteModal }) {
+function SettingsProfileSection({ user, lang, onPatchUser, onOpenDeleteModal, onLogout }) {
   const [name, setName] = useState(user.name || '');
   const [displayName, setDisplayName] = useState(user.display_name || '');
   const [saving, setSaving] = useState(false);
@@ -2526,6 +2527,26 @@ function SettingsProfileSection({ user, lang, onPatchUser, onOpenDeleteModal }) 
           {Ic.check}{saving ? t(I18N.saving, lang) : t(I18N.save, lang)}
         </button>
       </div>
+
+      {/* Logout (mobile users — desktop has it in sidebar footer) */}
+      {onLogout && (
+        <div className="settings-card settings-logout-card">
+          <div className="settings-logout-row">
+            <div>
+              <h3 className="settings-card-title">{t(I18N.settings_logout_title, lang)}</h3>
+              <p className="settings-card-desc">{t(I18N.settings_logout_desc, lang)}</p>
+            </div>
+            <button
+              type="button"
+              className="btn-logout"
+              onClick={onLogout}
+              aria-label={t(I18N.settings_logout_btn, lang)}>
+              {Ic.logout}
+              <span>{t(I18N.settings_logout_btn, lang)}</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Danger Zone */}
       <div className="danger-zone">

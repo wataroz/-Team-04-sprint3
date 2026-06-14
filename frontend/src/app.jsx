@@ -676,7 +676,8 @@ function App() {
           onPatchUser={patchUser}
           onOpenDeleteModal={() => setDeleteModalOpen(true)}
           onSetUser={setUser}
-          onBack={() => setView('overview')} />
+          onBack={() => setView('overview')}
+          onLogout={handleLogout} />
         }
       </main>
 
