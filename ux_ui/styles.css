@@ -4157,13 +4157,38 @@ html, body {
 
 @media (max-width: 480px) {
   .settings-view { gap: 14px !important; margin-top: 4px !important; }
-  .settings-sidebar { padding: 6px !important; border-radius: 14px !important; }
-  .settings-tab {
-    padding: 9px 12px !important;
-    font-size: 12.5px !important;
-    min-height: 44px;
+
+  /* Grid 2x2 — เห็น 4 tab ครบจอเดียว ไม่ต้อง scroll
+     Override flex + overflow + mask จาก block 1024px (horizontal scroll layout)
+     เหตุผล: iPhone SE (375px) horizontal scroll เห็น tab เดียวกินเต็มจอ → confusing UX */
+  .settings-sidebar {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 8px !important;
+    padding: 8px !important;
+    border-radius: 14px !important;
+    overflow-x: visible !important;
+    overflow-y: visible !important;
+    /* Kill edge fade — grid ไม่ต้องใช้ scroll cue */
+    -webkit-mask-image: none !important;
+            mask-image: none !important;
   }
-  .settings-tab svg { width: 14px !important; height: 14px !important; }
+
+  .settings-tab {
+    /* Tile shape — icon บน label ล่าง, จัดกึ่งกลาง grid cell */
+    flex-direction: column !important;
+    justify-content: center !important;
+    align-items: center !important;
+    text-align: center !important;
+    gap: 6px !important;
+    padding: 12px 8px !important;
+    font-size: 13px !important;
+    min-height: 56px;
+    width: 100% !important;
+    min-width: 0 !important;
+    flex: 1 1 auto !important;
+  }
+  .settings-tab svg { width: 18px !important; height: 18px !important; }
 
   .settings-section { gap: 12px !important; }
   .settings-section-title { font-size: 22px !important; }
