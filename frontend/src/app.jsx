@@ -77,6 +77,46 @@ function App() {
   const [settingsToast, setSettingsToast] = useState('');
   const notifRef = useRef(null);
 
+  // ─── LINE OAuth callback handler (Sprint 6) ───
+  // Backend redirects to `/?line_linked=1` (success) or `/?line_error=<code>`
+  // (failure) after the OAuth round-trip. Runs once on mount — surfaces a toast,
+  // routes the user to Settings, and scrubs the query string so a refresh
+  // doesn't re-fire the toast.
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const linked = params.get('line_linked');
+      const errorCode = params.get('line_error');
+      if (!linked && !errorCode) return;
+
+      if (linked === '1') {
+        setSettingsToast(t(I18N.line_linked_toast, lang));
+        setView('settings');
+      } else if (errorCode) {
+        const errMap = {
+          state_invalid: I18N.line_oauth_error_state,
+          exchange_failed: I18N.line_oauth_error_exchange,
+          invalid_token: I18N.line_oauth_error_token,
+          user_cancelled: I18N.line_oauth_error_cancelled,
+        };
+        const msg = errMap[errorCode]
+          ? t(errMap[errorCode], lang)
+          : t(I18N.line_oauth_error_exchange, lang);
+        setSettingsToast(msg);
+        setView('settings');
+      }
+      setTimeout(() => setSettingsToast(''), 4000);
+      // Clean URL so refresh / back doesn't replay the toast.
+      const url = window.location.pathname + window.location.hash;
+      window.history.replaceState({}, '', url);
+    } catch (err) {
+      console.error('[oauth-callback] handler failed', err);
+    }
+  // Mount-only — `lang` may not be final yet, but URL is read once and toast
+  // re-renders on next state change anyway.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ─── Load persisted data from backend when the user logs in ───
   useEffect(() => {
     if (!user || !user.id) return;

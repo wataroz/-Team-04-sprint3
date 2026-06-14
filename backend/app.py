@@ -13,6 +13,8 @@ Routes:
     GET    /api/users/<id>/export-csv     - download all txs as CSV (Sprint 5)
     GET    /api/line/status               - is the web user linked to a LINE account? (Sprint 5)
     POST   /api/line/unlink               - remove the LINE↔web link (Sprint 5)
+    GET    /api/line/oauth/url            - build LINE Login authorise URL (verified linking)
+    GET    /api/line/oauth/callback       - LINE Login OAuth 2.0 / OIDC callback
     GET    /api/transactions              - list a user's transactions
     POST   /api/transactions              - bulk-create transactions
     PATCH  /api/transactions/<id>         - re-categorise one tx (Learning Loop)
@@ -461,6 +463,332 @@ def api_line_status():
         })
     finally:
         db.close()
+
+
+# ─── LINE Login OAuth 2.0 / OIDC ────────────────────────────────────────────
+# Adds a "1-click verified link" alternative to the existing
+# `เชื่อม <email>` LINE-bot command. The chat command is kept as a fallback so
+# users who don't want to leave LINE still have a path.
+#
+# Flow:
+#   1. Frontend GETs /api/line/oauth/url?user_id=<web_user_id>
+#      → backend signs a short-lived state JWT embedding user_id, returns
+#        a fully-formed LINE authorise URL.
+#   2. User clicks → LINE consent screen → redirect back to
+#      /api/line/oauth/callback?code=...&state=...
+#   3. Backend verifies state JWT (signature + exp + matches our user_id),
+#      exchanges `code` for tokens, verifies the id_token (HS256 — LINE
+#      uses a symmetric key, NOT RS256), pulls `sub` (= line_user_id),
+#      and reuses backend.line_bot._link_line_to_user to actually wire
+#      LineUser ↔ web user (same safety guard + data-move + cleanup as the
+#      email command, kept in one place).
+#   4. Redirect → /?line_linked=1 (success) or /?line_error=<code> (failure)
+#      so the React SPA can show a toast and refresh the link status.
+
+_LINE_OAUTH_AUTHORIZE_URL = "https://access.line.me/oauth2/v2.1/authorize"
+_LINE_OAUTH_TOKEN_URL = "https://api.line.me/oauth2/v2.1/token"
+_LINE_OAUTH_SCOPES = "openid profile"
+# Short window — the round trip is "user clicks → LINE consent → back".
+# Anything beyond 10 minutes is almost certainly a replay / abandoned tab.
+_OAUTH_STATE_TTL_SECONDS = 10 * 60
+
+
+def _flask_signing_secret() -> str:
+    """Return the secret used to HS256-sign our OAuth state tokens.
+
+    Prefers FLASK_SECRET_KEY (proper signing key); falls back to
+    ADMIN_CLEANUP_TOKEN so a single mis-set env var doesn't crash the route
+    for ops. We log a one-shot warning when FLASK_SECRET_KEY is missing so
+    it's obvious in prod logs.
+    """
+    secret = (os.environ.get("FLASK_SECRET_KEY") or "").strip()
+    if not secret:
+        secret = (os.environ.get("ADMIN_CLEANUP_TOKEN") or "").strip()
+    return secret
+
+
+def _make_oauth_state(user_id: int) -> str:
+    """Sign a short-lived state JWT carrying ``user_id``.
+
+    Algorithm: HS256 with FLASK_SECRET_KEY. The state parameter is LINE's
+    primary CSRF defence — by binding it to a server-signed JWT with a 10-min
+    expiry, an attacker can't craft a callback that links someone else's
+    LINE account to the victim's web user.
+    """
+    import jwt  # lazy — keeps startup clean if PyJWT isn't installed yet
+
+    secret = _flask_signing_secret()
+    if not secret:
+        raise RuntimeError("FLASK_SECRET_KEY (or ADMIN_CLEANUP_TOKEN) not set")
+    now = datetime.utcnow()
+    payload = {
+        "sub": int(user_id),
+        "iat": now,
+        "exp": now + timedelta(seconds=_OAUTH_STATE_TTL_SECONDS),
+        "purpose": "line_oauth_link",
+    }
+    return jwt.encode(payload, secret, algorithm="HS256")
+
+
+def _verify_oauth_state(token: str) -> int:
+    """Verify an OAuth state JWT and return the embedded ``user_id``.
+
+    Raises ``ValueError`` on any failure (expired, bad signature, wrong
+    purpose claim, missing user_id) so the callback handler can map it to a
+    single ``line_error=state_invalid`` redirect without leaking specifics.
+    """
+    import jwt
+
+    secret = _flask_signing_secret()
+    if not secret:
+        raise ValueError("signing secret not configured")
+    try:
+        payload = jwt.decode(
+            token,
+            secret,
+            algorithms=["HS256"],
+            options={"require": ["exp", "sub"]},
+        )
+    except Exception as exc:
+        raise ValueError(f"state decode failed: {exc}") from exc
+
+    if payload.get("purpose") != "line_oauth_link":
+        raise ValueError("state purpose mismatch")
+    try:
+        return int(payload["sub"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("state missing user_id") from exc
+
+
+def _verify_line_id_token(id_token: str, channel_id: str, channel_secret: str) -> dict:
+    """Verify a LINE id_token (HS256) and return its claims.
+
+    LINE uses HS256 with the channel secret as the shared key — NOT RS256
+    with a JWKS endpoint. Reference:
+    https://developers.line.biz/en/docs/line-login/verify-id-token/
+
+    Claims we explicitly check:
+      * ``iss`` == ``https://access.line.me``  (spec)
+      * ``aud`` == channel_id                 (token was issued for our app)
+      * ``exp`` > now                          (not expired — PyJWT enforces)
+
+    Returns the decoded claim dict on success; raises ``ValueError`` on any
+    verification failure.
+    """
+    import jwt
+
+    if not (channel_id and channel_secret):
+        raise ValueError("LINE Login channel id/secret not configured")
+    try:
+        claims = jwt.decode(
+            id_token,
+            channel_secret,
+            algorithms=["HS256"],
+            audience=channel_id,
+            issuer="https://access.line.me",
+            options={"require": ["exp", "iss", "aud", "sub"]},
+        )
+    except Exception as exc:
+        raise ValueError(f"id_token verify failed: {exc}") from exc
+    return claims
+
+
+def _line_oauth_callback_url() -> str:
+    """Derive the registered LINE Login callback URL.
+
+    Prefers the explicit env var (must match the LINE Console value exactly —
+    LINE rejects trailing-slash mismatches). Falls back to ``request.host_url``
+    so local dev works without touching .env.
+    """
+    explicit = (os.environ.get("LINE_LOGIN_CALLBACK_URL") or "").strip()
+    if explicit:
+        return explicit
+    # request.host_url ends with "/", strip it then append the path.
+    return request.host_url.rstrip("/") + "/api/line/oauth/callback"
+
+
+def _line_link_redirect(success: bool, error_code: str = "") -> Response:
+    """Return a 302 back to the SPA with a result marker in the query string."""
+    if success:
+        target = "/?line_linked=1"
+    else:
+        # error_code is a short token only; never echoes user input or PII.
+        safe = re.sub(r"[^a-z0-9_]", "", (error_code or "unknown").lower())[:32] or "unknown"
+        target = f"/?line_error={safe}"
+    resp = Response(status=302)
+    resp.headers["Location"] = target
+    return resp
+
+
+@app.route("/api/line/oauth/url", methods=["GET"])
+def api_line_oauth_url():
+    """Build the LINE Login authorise URL for ``user_id``.
+
+    Returns ``{"url": "<https://access.line.me/...>"}``. The frontend should
+    open this URL (full navigation, not popup) so the LINE redirect callback
+    lands on our backend with a fresh document context.
+
+    Errors:
+      400 — user_id missing
+      404 — user_id not in DB
+      503 — LINE Login env vars not configured (signals ops misconfiguration)
+    """
+    user_id = request.args.get("user_id", type=int)
+    if not user_id:
+        return jsonify({"error": "user_id required"}), 400
+
+    channel_id = (os.environ.get("LINE_LOGIN_CHANNEL_ID") or "").strip()
+    channel_secret = (os.environ.get("LINE_LOGIN_CHANNEL_SECRET") or "").strip()
+    if not (channel_id and channel_secret):
+        return jsonify({"error": "LINE Login not configured"}), 503
+
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter_by(id=user_id).first()
+        if user is None:
+            return jsonify({"error": "user not found"}), 404
+    finally:
+        db.close()
+
+    try:
+        state = _make_oauth_state(user_id)
+    except RuntimeError as exc:
+        log.error("OAuth state signing failed: %s", exc)
+        return jsonify({"error": "signing key not configured"}), 503
+
+    from urllib.parse import urlencode
+    params = {
+        "response_type": "code",
+        "client_id": channel_id,
+        "redirect_uri": _line_oauth_callback_url(),
+        "state": state,
+        "scope": _LINE_OAUTH_SCOPES,
+        # Force the consent screen so the user always sees what they're
+        # approving (and so re-links work after an unlink).
+        "prompt": "consent",
+        "bot_prompt": "normal",
+    }
+    return jsonify({"url": f"{_LINE_OAUTH_AUTHORIZE_URL}?{urlencode(params)}"})
+
+
+@app.route("/api/line/oauth/callback", methods=["GET"])
+def api_line_oauth_callback():
+    """Handle LINE's redirect after the user grants consent.
+
+    LINE sends ``?code=...&state=...`` on success, or
+    ``?error=...&error_description=...&state=...`` on user-cancel / failure.
+    Either way we resolve to a single SPA redirect — success path goes to
+    ``/?line_linked=1``; every failure mode maps to ``/?line_error=<code>``.
+
+    We deliberately avoid raising 4xx/5xx here: the browser is showing the
+    LINE redirect, not a JSON client, so the SPA toast is the right surface.
+    """
+    err_param = request.args.get("error", "")
+    if err_param:
+        # User clicked "Cancel" on the LINE consent screen, or LINE itself
+        # rejected the request. Bounce back with a marker; never echo the
+        # error_description as it can contain provider-side detail we'd
+        # rather keep out of the SPA URL.
+        log.info("LINE OAuth user-cancel / provider error: %s", err_param)
+        return _line_link_redirect(False, "user_cancelled")
+
+    code = (request.args.get("code") or "").strip()
+    state = (request.args.get("state") or "").strip()
+    if not (code and state):
+        return _line_link_redirect(False, "missing_params")
+
+    # 1) Verify state — must be a JWT we signed within the last 10 min.
+    try:
+        web_user_id = _verify_oauth_state(state)
+    except ValueError as exc:
+        log.warning("OAuth state invalid: %s", exc)
+        return _line_link_redirect(False, "state_invalid")
+
+    channel_id = (os.environ.get("LINE_LOGIN_CHANNEL_ID") or "").strip()
+    channel_secret = (os.environ.get("LINE_LOGIN_CHANNEL_SECRET") or "").strip()
+    if not (channel_id and channel_secret):
+        log.error("OAuth callback hit but LINE Login env vars are unset")
+        return _line_link_redirect(False, "not_configured")
+
+    # 2) Exchange the authorisation code for tokens. LINE requires
+    # application/x-www-form-urlencoded — NOT JSON.
+    try:
+        import requests as _requests  # lazy — only this route needs it
+        resp = _requests.post(
+            _LINE_OAUTH_TOKEN_URL,
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": _line_oauth_callback_url(),
+                "client_id": channel_id,
+                "client_secret": channel_secret,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=10,
+        )
+    except Exception as exc:
+        log.exception("LINE token exchange network error: %s", exc)
+        return _line_link_redirect(False, "exchange_failed")
+
+    if resp.status_code != 200:
+        # Don't log the full body — it can include short-lived tokens on
+        # success paths and noisy error blobs on failure. Status code is enough
+        # for ops; details live in LINE's own dashboard.
+        log.warning("LINE token exchange returned HTTP %s", resp.status_code)
+        return _line_link_redirect(False, "exchange_failed")
+
+    try:
+        payload = resp.json()
+    except Exception:
+        log.warning("LINE token exchange returned non-JSON body")
+        return _line_link_redirect(False, "exchange_failed")
+
+    id_token = (payload.get("id_token") or "").strip()
+    if not id_token:
+        log.warning("LINE token exchange OK but no id_token in body")
+        return _line_link_redirect(False, "exchange_failed")
+
+    # 3) Verify id_token signature + standard claims.
+    try:
+        claims = _verify_line_id_token(id_token, channel_id, channel_secret)
+    except ValueError as exc:
+        log.warning("id_token verify failed: %s", exc)
+        return _line_link_redirect(False, "invalid_token")
+
+    line_user_id = (claims.get("sub") or "").strip()
+    if not line_user_id:
+        return _line_link_redirect(False, "invalid_token")
+    display_name = (claims.get("name") or "").strip()
+
+    # 4) Reuse the email-command's link logic so safety guard (auto-user data
+    # move + MerchantOverride cleanup) lives in exactly one place.
+    from backend.line_bot import _link_line_to_user
+
+    db = SessionLocal()
+    try:
+        result = _link_line_to_user(
+            db,
+            web_user_id=web_user_id,
+            line_user_id=line_user_id,
+            display_name=display_name,
+        )
+        db.commit()
+        log.info(
+            "LINE OAuth link OK: web_user_id=%s line_user_id=%s status=%s moved_tx=%s",
+            web_user_id, line_user_id, result["status"], result["moved_tx"],
+        )
+    except ValueError as exc:
+        db.rollback()
+        log.warning("LINE OAuth link target missing: %s", exc)
+        return _line_link_redirect(False, "user_missing")
+    except Exception:
+        db.rollback()
+        log.exception("LINE OAuth link DB error")
+        return _line_link_redirect(False, "link_failed")
+    finally:
+        db.close()
+
+    return _line_link_redirect(True)
 
 
 @app.route("/api/line/unlink", methods=["POST"])

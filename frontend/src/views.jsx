@@ -2746,6 +2746,7 @@ function SettingsAppearanceSection({ lang, tw, setTweak }) {
 function SettingsLineSection({ user, lang }) {
   const [status, setStatus] = useState(null); // null = loading, {linked, ...}
   const [unlinking, setUnlinking] = useState(false);
+  const [oauthLoading, setOauthLoading] = useState(false);
   const [toast, setToast] = useState('');
 
   const fetchStatus = async () => {
@@ -2768,6 +2769,30 @@ function SettingsLineSection({ user, lang }) {
     fetchStatus();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user && user.id]);
+
+  // LINE OAuth flow (Sprint 6) — primary linking path.
+  // 1) Ask backend for the authorize URL (state token baked in server-side)
+  // 2) Hard navigate so the user goes through LINE Login
+  // 3) Backend handles the callback and redirects to `/?line_linked=1`
+  //    (or `/?line_error=<code>`), which app.jsx picks up on mount.
+  const handleConnectLine = async () => {
+    if (oauthLoading || !user || !user.id) return;
+    setOauthLoading(true);
+    try {
+      const r = await fetch('/api/line/oauth/url?user_id=' + user.id);
+      if (!r.ok) throw new Error('oauth url request failed: ' + r.status);
+      const j = await r.json();
+      if (!j || !j.url) throw new Error('missing url in response');
+      window.location.href = j.url;
+    } catch (err) {
+      console.error('[SettingsLine] oauth init failed', err);
+      setToast(t(I18N.line_oauth_failed, lang));
+      setTimeout(() => setToast(''), 3500);
+      setOauthLoading(false);
+    }
+    // Note: no `finally` resetting loading — on success the page navigates
+    // away, so leaving the button in loading state until then is correct UX.
+  };
 
   const handleUnlink = async () => {
     if (unlinking) return;
@@ -2830,44 +2855,119 @@ function SettingsLineSection({ user, lang }) {
       }
 
       {status && !status.linked &&
-        <div className="settings-card qr-card">
-          <h3 className="settings-card-title">{t(I18N.line_qr_title, lang)}</h3>
-          <div className="qr-card-image">
-            <img
-              src="/ui/assets/line-qr.png"
-              alt="LINE QR"
-              onError={(e) => {
-                // Graceful fallback when asset is missing — show placeholder text
-                e.currentTarget.style.display = 'none';
-                if (e.currentTarget.nextSibling) e.currentTarget.nextSibling.style.display = 'flex';
-              }} />
-            <div
+        <>
+          {/* Primary action — LINE OAuth (Sprint 6).
+              Uses LINE brand green (#06C755) inline so it stays on-brand
+              across both Cream Luxe and Dark Luxe themes. */}
+          <div className="settings-card" style={{ textAlign: 'center' }}>
+            <button
+              type="button"
+              onClick={handleConnectLine}
+              disabled={oauthLoading}
               style={{
-                display: 'none',
-                width: '100%', height: '100%',
-                alignItems: 'center', justifyContent: 'center',
-                fontFamily: 'var(--mono)', fontSize: 11,
-                color: '#999', textAlign: 'center', padding: 16,
-                lineHeight: 1.5,
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 10,
+                width: '100%',
+                maxWidth: 360,
+                padding: '14px 20px',
+                background: '#06C755',
+                color: '#FFFFFF',
+                border: 'none',
+                borderRadius: 12,
+                fontSize: 15,
+                fontWeight: 600,
+                letterSpacing: 0.2,
+                cursor: oauthLoading ? 'wait' : 'pointer',
+                opacity: oauthLoading ? 0.7 : 1,
+                boxShadow: '0 4px 16px rgba(6,199,85,0.25)',
+                transition: 'transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease',
+              }}
+              onMouseDown={(e) => { if (!oauthLoading) e.currentTarget.style.transform = 'translateY(1px)'; }}
+              onMouseUp={(e) => { e.currentTarget.style.transform = 'translateY(0)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; }}>
+              {/* LINE logo glyph — inline SVG (white on green) */}
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M19.365 9.863c.349 0 .63.285.63.631 0 .345-.281.63-.63.63H17.61v1.125h1.755c.349 0 .63.283.63.63 0 .344-.281.629-.63.629h-2.386c-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.63-.63h2.386c.346 0 .627.285.627.63 0 .349-.281.63-.63.63H17.61v1.125h1.755zm-3.855 3.016c0 .27-.174.51-.432.596-.064.021-.133.031-.199.031-.211 0-.391-.09-.51-.25l-2.443-3.317v2.94c0 .344-.279.629-.631.629-.346 0-.626-.285-.626-.629V8.108c0-.27.173-.51.43-.595.06-.023.136-.033.194-.033.195 0 .375.104.495.254l2.462 3.33V8.108c0-.345.282-.63.63-.63.345 0 .63.285.63.63v4.771zm-5.741 0c0 .344-.282.629-.631.629-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.63-.63.346 0 .628.285.628.63v4.771zm-2.466.629H4.917c-.345 0-.63-.285-.63-.629V8.108c0-.345.285-.63.63-.63.348 0 .63.285.63.63v4.141h1.756c.348 0 .629.283.629.63 0 .344-.282.629-.629.629M24 10.314C24 4.943 18.615.572 12 .572S0 4.943 0 10.314c0 4.811 4.27 8.842 10.035 9.608.391.082.923.258 1.058.59.12.301.079.766.038 1.08l-.164 1.02c-.045.301-.24 1.186 1.049.645 1.291-.539 6.916-4.078 9.436-6.975C23.176 14.393 24 12.458 24 10.314"/>
+              </svg>
+              <span>
+                {oauthLoading
+                  ? t(I18N.line_oauth_loading, lang)
+                  : t(I18N.line_oauth_btn, lang)}
+              </span>
+            </button>
+            <p style={{
+              margin: '12px auto 0',
+              maxWidth: 320,
+              color: 'var(--ink-subtle)',
+              fontSize: 12.5,
+              lineHeight: 1.5,
+            }}>
+              {t(I18N.line_oauth_btn_desc, lang)}
+            </p>
+          </div>
+
+          {/* Fallback — chat-driven email linking (the pre-OAuth flow).
+              Collapsed by default so OAuth stays the obvious primary action. */}
+          <details
+            className="settings-card"
+            style={{ padding: 0, overflow: 'hidden' }}>
+            <summary
+              style={{
+                padding: '14px 18px',
+                cursor: 'pointer',
+                fontSize: 13.5,
+                color: 'var(--ink-subtle)',
+                listStyle: 'none',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 12,
               }}>
-              LINE QR<br/>
-              (asset placeholder)
+              <span>{t(I18N.line_oauth_fallback_label, lang)}</span>
+              <span aria-hidden="true" style={{ fontSize: 11, opacity: 0.6 }}>▾</span>
+            </summary>
+            <div className="qr-card" style={{ borderTop: '1px solid var(--border)', padding: 18 }}>
+              <h3 className="settings-card-title">{t(I18N.line_qr_title, lang)}</h3>
+              <div className="qr-card-image">
+                <img
+                  src="/ui/assets/line-qr.png"
+                  alt="LINE QR"
+                  onError={(e) => {
+                    // Graceful fallback when asset is missing — show placeholder text
+                    e.currentTarget.style.display = 'none';
+                    if (e.currentTarget.nextSibling) e.currentTarget.nextSibling.style.display = 'flex';
+                  }} />
+                <div
+                  style={{
+                    display: 'none',
+                    width: '100%', height: '100%',
+                    alignItems: 'center', justifyContent: 'center',
+                    fontFamily: 'var(--mono)', fontSize: 11,
+                    color: '#999', textAlign: 'center', padding: 16,
+                    lineHeight: 1.5,
+                  }}>
+                  LINE QR<br/>
+                  (asset placeholder)
+                </div>
+              </div>
+              <div className="qr-card-instructions">
+                <ol>
+                  <li>{t(I18N.line_qr_step1, lang)}</li>
+                  <li>{t(I18N.line_qr_step2, lang)}</li>
+                  <li>
+                    {lang === 'th' ? (
+                      <>พิมพ์ <code style={{ background: 'var(--surface-strong)', padding: '2px 6px', borderRadius: 4, fontFamily: 'var(--mono)', fontSize: 12 }}>{user.email}</code> ในแชท</>
+                    ) : (
+                      <>Send <code style={{ background: 'var(--surface-strong)', padding: '2px 6px', borderRadius: 4, fontFamily: 'var(--mono)', fontSize: 12 }}>{user.email}</code> in chat</>
+                    )}
+                  </li>
+                </ol>
+              </div>
             </div>
-          </div>
-          <div className="qr-card-instructions">
-            <ol>
-              <li>{t(I18N.line_qr_step1, lang)}</li>
-              <li>{t(I18N.line_qr_step2, lang)}</li>
-              <li>
-                {lang === 'th' ? (
-                  <>พิมพ์ <code style={{ background: 'var(--surface-strong)', padding: '2px 6px', borderRadius: 4, fontFamily: 'var(--mono)', fontSize: 12 }}>{user.email}</code> ในแชท</>
-                ) : (
-                  <>Send <code style={{ background: 'var(--surface-strong)', padding: '2px 6px', borderRadius: 4, fontFamily: 'var(--mono)', fontSize: 12 }}>{user.email}</code> in chat</>
-                )}
-              </li>
-            </ol>
-          </div>
-        </div>
+          </details>
+        </>
       }
 
       {toast &&

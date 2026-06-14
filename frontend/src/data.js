@@ -310,6 +310,18 @@ const I18N = {
   line_unlink_failed:        { th: 'ยกเลิกไม่สำเร็จ ลองอีกครั้ง',                  en: 'Unlink failed — please try again' },
   line_loading:              { th: 'กำลังโหลดสถานะ LINE...',                     en: 'Loading LINE status…' },
 
+  // LINE OAuth (Sprint 6 — primary linking flow; chat-based email is now the fallback)
+  line_oauth_btn:            { th: 'เชื่อมด้วย LINE',                              en: 'Connect with LINE' },
+  line_oauth_btn_desc:       { th: 'ปลอดภัย ใช้ LINE ยืนยันตัวตน ไม่ต้องพิมพ์อะไร', en: 'Secure — LINE verifies identity, no typing' },
+  line_oauth_fallback_label: { th: 'วิธีอื่น: พิมพ์คำสั่งใน LINE',                  en: 'Alternative: type command in LINE' },
+  line_oauth_loading:        { th: 'กำลังเปิด LINE...',                            en: 'Opening LINE…' },
+  line_oauth_failed:         { th: 'เปิด LINE ไม่สำเร็จ ลองอีกครั้ง',               en: 'Could not open LINE — please try again' },
+  line_linked_toast:         { th: 'เชื่อม LINE สำเร็จ',                            en: 'LINE connected successfully' },
+  line_oauth_error_state:    { th: 'ลิงก์หมดอายุ ลองใหม่อีกครั้ง',                   en: 'Link expired, try again' },
+  line_oauth_error_exchange: { th: 'เชื่อมต่อ LINE ล้มเหลว ลองใหม่',               en: 'Connection failed, try again' },
+  line_oauth_error_token:    { th: 'ยืนยันตัวตนไม่สำเร็จ',                          en: 'Identity verification failed' },
+  line_oauth_error_cancelled:{ th: 'คุณยกเลิกการเชื่อม LINE',                       en: 'You cancelled the LINE link' },
+
   // Notifications section
   notifications_section_title:{ th: 'การแจ้งเตือน',                                en: 'Notifications' },
   notifications_section_sub: { th: 'เลือกประเภทการแจ้งเตือนที่ต้องการได้รับ',       en: 'Choose which notifications you want to receive.' },

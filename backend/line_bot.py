@@ -258,20 +258,110 @@ def _extract_link_email(raw_text: str) -> str | None:
     return email
 
 
+def _link_line_to_user(
+    db,
+    web_user_id: int,
+    line_user_id: str,
+    display_name: str = "",
+) -> dict:
+    """Core LINE↔web link logic, shared by the email-command flow and the
+    OAuth 2.0 callback.
+
+    Caller owns the SQLAlchemy session — this function never commits or closes
+    it. Returns a small status dict describing what happened so the caller can
+    choose its own surface (Thai LINE reply vs. HTTP redirect query string):
+
+      ``{"status": "<code>", "moved_tx": <int>, "old_user_id": <int|None>}``
+
+    Status codes:
+      ``linked_new``      — no prior LineUser row, created fresh mapping.
+      ``already_linked``  — LineUser already pointed at this web user (no-op).
+      ``relinked_moved``  — re-linked from a throwaway ``@line.local`` auto-user
+                            and migrated its data onto the web user.
+      ``relinked_only``   — re-linked from a real web account; data left alone
+                            (latest explicit link wins, no destructive merge).
+
+    Security guard (P0): caller MUST have already verified that ``web_user_id``
+    belongs to the requester (e.g. via authenticated email command, or via a
+    state JWT signed for that user). This function does NOT re-verify.
+
+    Failure modes:
+      * Raises ``ValueError("target user not found")`` if ``web_user_id`` is
+        missing — caller decides how to surface it.
+    """
+    target = db.query(User).filter_by(id=web_user_id).first()
+    if target is None:
+        raise ValueError("target user not found")
+
+    lu = db.query(LineUser).filter_by(line_user_id=line_user_id).first()
+    if lu is None:
+        db.add(LineUser(
+            line_user_id=line_user_id,
+            user_id=target.id,
+            display_name=display_name or "",
+            linked_at=datetime.now(timezone.utc),
+        ))
+        return {"status": "linked_new", "moved_tx": 0, "old_user_id": None}
+
+    if lu.user_id == target.id:
+        # Idempotent — refresh display_name in case the LINE profile changed.
+        if display_name and lu.display_name != display_name:
+            lu.display_name = display_name
+        return {"status": "already_linked", "moved_tx": 0, "old_user_id": target.id}
+
+    old_user_id = lu.user_id
+
+    old_user = db.query(User).filter_by(id=old_user_id).first()
+    is_auto_user = (
+        old_user is not None
+        and (old_user.email or "").endswith("@line.local")
+        and old_user.id != target.id
+    )
+
+    moved_tx = 0
+    if is_auto_user:
+        # Throwaway LINE auto-account → migrate its data onto the web user,
+        # then delete the orphan. Order matters for FK safety.
+        moved_tx = db.query(Transaction).filter_by(user_id=old_user_id).update(
+            {"user_id": target.id}, synchronize_session=False
+        )
+        db.query(Import).filter_by(user_id=old_user_id).update(
+            {"user_id": target.id}, synchronize_session=False
+        )
+        db.query(Notification).filter_by(user_id=old_user_id).update(
+            {"user_id": target.id}, synchronize_session=False
+        )
+        db.query(Preference).filter_by(user_id=old_user_id).delete(
+            synchronize_session=False
+        )
+        # Clear merchant overrides ของ auto-user ก่อน delete (กัน FK violation
+        # ถ้าวันหลังเพิ่ม LINE edit-category UI). Pattern เดิมจาก Sprint 5.
+        db.query(MerchantOverride).filter_by(user_id=old_user_id).delete(
+            synchronize_session=False
+        )
+        db.delete(old_user)
+        status = "relinked_moved"
+    else:
+        # Old user is a real web account — never touch their data. Just re-point.
+        status = "relinked_only"
+
+    lu.user_id = target.id
+    lu.linked_at = datetime.now(timezone.utc)
+    if display_name:
+        lu.display_name = display_name
+
+    return {"status": status, "moved_tx": moved_tx, "old_user_id": old_user_id}
+
+
 def _link_account(line_user_id: str, email: str) -> str:
     """Link this LINE account to an existing web User (by email).
 
-    Security guard (P0): only emails that already have a User row (i.e. the
-    person has logged into the web app at least once) can be linked. We never
-    create a new web account here.
-
-    On success we MOVE the LINE auto-user's existing data (transactions,
-    imports, notifications) onto the web user so nothing is lost, then point
-    LineUser.user_id at the web user.
+    Email-command surface for ``_link_line_to_user``. Security guard (P0):
+    only emails that already have a User row (i.e. the person has logged in
+    to the web app at least once) can be linked. We never create a new web
+    account here.
     """
     db = SessionLocal()
-    # Track whether linking actually succeeded so we can fire budget alerts
-    # AFTER the DB session is fully closed (mirrors the _handle_pdf pattern).
     linked_user_id: int | None = None
     try:
         target = db.query(User).filter_by(email=email).first()
@@ -284,73 +374,30 @@ def _link_account(line_user_id: str, email: str) -> str:
                 f"🌐 {APP_URL}"
             )
 
-        lu = db.query(LineUser).filter_by(line_user_id=line_user_id).first()
-        if lu is None:
-            # No LineUser row yet — create one pointing straight at the target.
-            lu = LineUser(
+        try:
+            result = _link_line_to_user(
+                db,
+                web_user_id=target.id,
                 line_user_id=line_user_id,
-                user_id=target.id,
                 display_name=_try_get_display_name(line_user_id),
-                linked_at=datetime.now(timezone.utc),
             )
-            db.add(lu)
-            db.commit()
-            linked_user_id = target.id
-            return _link_success_msg(email)
+        except ValueError:
+            # Already handled the "target missing" case above; this should be
+            # unreachable but kept for completeness.
+            return f"ไม่พบบัญชีนี้ครับ 🙏 ({email})"
 
-        if lu.user_id == target.id:
+        if result["status"] == "already_linked":
+            db.commit()
             return (
                 f"บัญชีนี้เชื่อมกับ {email} อยู่แล้วครับ ✅\n"
                 "ข้อมูล LINE กับเว็บเป็นชุดเดียวกันอยู่แล้ว"
             )
 
-        old_user_id = lu.user_id
-
-        # Fetch the old user first so we can decide whether moving data is safe.
-        old_user = db.query(User).filter_by(id=old_user_id).first()
-        is_auto_user = (
-            old_user is not None
-            and old_user.email.endswith("@line.local")
-            and old_user.id != target.id
-        )
-
-        moved_tx = 0
-        if is_auto_user:
-            # Old user is the throwaway LINE auto-account (@line.local) → it only
-            # holds data that came in via LINE before linking, so it's safe to
-            # MOVE that data onto the target web user, then delete the orphan.
-            moved_tx = db.query(Transaction).filter_by(user_id=old_user_id).update(
-                {"user_id": target.id}, synchronize_session=False
-            )
-            db.query(Import).filter_by(user_id=old_user_id).update(
-                {"user_id": target.id}, synchronize_session=False
-            )
-            db.query(Notification).filter_by(user_id=old_user_id).update(
-                {"user_id": target.id}, synchronize_session=False
-            )
-            # Clean up the orphaned auto-user (and its preference) so it doesn't
-            # linger. Only the throwaway LINE-local account is ever deleted here.
-            db.query(Preference).filter_by(user_id=old_user_id).delete(
-                synchronize_session=False
-            )
-            # Sprint 5 — clear merchant overrides ของ auto-user ก่อน delete
-            # (กัน FK violation ถ้าวันหน้าเพิ่ม LINE edit-category UI)
-            db.query(MerchantOverride).filter_by(user_id=old_user_id).delete(
-                synchronize_session=False
-            )
-            db.delete(old_user)
-        # else: old user is a real web account (normal email) — DO NOT move or
-        # delete anything. Account A keeps all of its own data; we only re-point
-        # the LINE mapping to B below (latest explicit link wins).
-
-        # Re-point the LINE mapping to the web user (always, both cases).
-        lu.user_id = target.id
-        lu.linked_at = datetime.now(timezone.utc)
-
         db.commit()
         log.info(
-            "Linked LINE %s → user_id=%s (%s), moved %s txs from old user_id=%s",
-            line_user_id, target.id, email, moved_tx, old_user_id,
+            "Linked LINE %s → user_id=%s (%s) status=%s moved_tx=%s old_user_id=%s",
+            line_user_id, target.id, email,
+            result["status"], result["moved_tx"], result["old_user_id"],
         )
         linked_user_id = target.id
         return _link_success_msg(email)
