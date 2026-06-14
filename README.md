@@ -24,11 +24,37 @@
 
 **MoneyMind** เป็นแอปพลิเคชันจัดการการเงินส่วนตัวที่:
 
-- 📄 **อ่าน Statement PDF** จากธนาคารไทย 4 แห่งโดยอัตโนมัติ
-- 🤖 **จัดหมวดหมู่รายจ่าย** ด้วย keyword matching
+- 📄 **อ่าน Statement PDF** จากธนาคารไทย 4 แห่งโดยอัตโนมัติ (รองรับ PDF ใส่รหัสผ่าน + statement ภาษาอังกฤษ)
+- 🤖 **จัดหมวดหมู่รายจ่าย** ด้วย keyword matching + Learning Loop (ระบบจำหมวดที่ผู้ใช้แก้)
 - 📊 **วิเคราะห์พฤติกรรมการใช้เงิน** + แสดงเทรนด์
 - 💬 **LINE Bot** ให้ใช้งานผ่านแชทได้สะดวก
-- 📱 **Responsive** ใช้ได้ทั้ง Mobile / Tablet / Desktop
+- 🔐 **LINE Login OAuth** เชื่อมบัญชี 1 คลิกแบบปลอดภัย (ระบบเดียวกับ Login with Google)
+- 📱 **Responsive + PWA** ใช้ได้ทั้ง Mobile / Tablet / Desktop + ติดตั้งเป็นแอปบนมือถือได้
+- 🌗 **สลับธีมสว่าง/มืด** + จำค่าข้ามอุปกรณ์
+- 🛡️ **PDPA-compliant** — ลบบัญชี + ระยะผ่อนผัน 30 วัน + Export ข้อมูลตัวเองเป็น CSV
+
+---
+
+## 🚀 Sprint 5 Updates (Prototype v2)
+
+> ปรับ Prototype v1 → Prototype v2 ตาม feedback จาก Sprint 4 + เพิ่ม 6 features หลัก
+
+### Highlights
+1. **หน้า Settings 4 หมวด** — โปรไฟล์ / การแสดงผล / LINE / แจ้งเตือน (รวมศูนย์การตั้งค่า)
+2. **PDPA Compliance** — ลบบัญชีแบบมีระยะผ่อนผัน 30 วัน + ยกเลิกการลบได้ + Export ข้อมูลเป็น CSV
+3. **Brand v2 + PWA** — โลโก้ block M ครีม/ทอง + ติดตั้งเป็นแอปบนมือถือได้ (Android Chrome + iOS Safari)
+4. **Light/Dark Theme** — สลับธีมได้ + จำค่าในฐานข้อมูล (เปิดเครื่องอื่นธีมเหมือนเดิม)
+5. **LINE Login OAuth** — เชื่อมบัญชี 1 คลิก verify ตัวตนผ่าน LINE จริง (คงคำสั่ง `เชื่อม email` เป็น fallback)
+6. **Mobile UX fixes** — แก้บั๊กปุ่มหมวด, ปุ่ม save ถูกทับ, แท็บ Settings
+
+### Sprint 5 Documentation
+- 📋 [CP7 Full Report](docs/cp7-report.md) — รายงานเต็ม 8 sections
+- 🎯 [Feedback-to-Fix Mapping](docs/feedback-to-fix.md) — feedback → fix
+- 🔨 [Build Log](docs/sprint5-build-log.md) — สิ่งที่ build เสร็จ + Evidence
+- 🔄 [Before/After](docs/before-after.md) — Prototype v1 vs v2
+- 🎬 [Final Demo Evidence](docs/final-demo.md) — Live URL + Core Flow + PWA install
+- ⚠️ [Known Issues](docs/known-issues.md) — โปร่งใส demo-grade vs production-grade
+- 👥 [Individual Contribution](docs/evidence-log-sprint5.md) — ใครทำอะไร
 
 ---
 
@@ -39,12 +65,15 @@
 | Feature | Description |
 |---------|-------------|
 | 📊 **Dashboard** | KPI cards, sparkline 30 วัน, donut chart, recent transactions |
-| 💳 **Transactions** | ค้นหา/กรอง/จัดเรียงธุรกรรมทั้งหมด |
-| 📤 **Upload Statement** | ลากไฟล์ PDF → parse + auto-categorize |
+| 💳 **Transactions** | ค้นหา/กรอง/จัดเรียงธุรกรรมทั้งหมด + แก้หมวดได้ (Learning Loop) |
+| 📤 **Upload Statement** | ลากไฟล์ PDF → parse + auto-categorize (รองรับ PDF ใส่รหัสผ่าน) |
 | 🔍 **AI Insights** | คะแนนการเงิน + Insight cards จากข้อมูลจริง |
 | 💬 **Chat with Mind** | ถามเรื่องการเงินกับ AI assistant |
-| 🔔 **Notifications** | ประวัติการแจ้งเตือนทั้งหมด |
-| 🎨 **Tweaks Panel** | ปรับสี/ภาษา/สกุลเงิน/density ตามใจ |
+| 🔔 **Notifications** | ประวัติการแจ้งเตือนทั้งหมด + Budget alert push ผ่าน LINE |
+| ⚙️ **Settings (4 tabs)** | โปรไฟล์ / การแสดงผล / LINE link / แจ้งเตือน (Sprint 5) |
+| 🗑️ **Delete Account** | ลบบัญชี + 30-day grace + Export CSV (PDPA, Sprint 5) |
+| 🌗 **Theme Toggle** | สลับธีมสว่าง/มืด + จำค่าในฐานข้อมูล (Sprint 5) |
+| 📱 **PWA Install** | ติดตั้งเป็นแอปบนมือถือได้ (Sprint 5) |
 
 ### 🤖 LINE Bot
 
@@ -56,7 +85,8 @@
 | `เดือนนี้` | แยกหมวดหมู่รายจ่าย |
 | `วิเคราะห์` | Top 3 หมวด + คำแนะนำประหยัด |
 | `ช่วย` | รายการคำสั่งทั้งหมด |
-| 📎 ส่งไฟล์ PDF | อัปโหลด Statement อัตโนมัติ |
+| `เชื่อม <email>` | เชื่อม LINE กับบัญชีเว็บ (fallback — แนะนำใช้ LINE Login OAuth บนเว็บ) |
+| 📎 ส่งไฟล์ PDF | อัปโหลด Statement อัตโนมัติ (รองรับ PDF ใส่รหัสผ่าน — bot ถามรหัสในแชท) |
 
 ### 🏦 Supported Banks
 
@@ -221,9 +251,15 @@ Open http://localhost:5000
    - **Build Command**: `pip install -r requirements.txt`
    - **Start Command**: `gunicorn backend.app:app --bind 0.0.0.0:$PORT`
 5. **Environment Variables**:
-   - `LINE_CHANNEL_SECRET` — from LINE Developers Console
-   - `LINE_CHANNEL_ACCESS_TOKEN` — from LINE Developers Console
+   - `LINE_CHANNEL_SECRET` — from LINE Developers Console (Messaging API)
+   - `LINE_CHANNEL_ACCESS_TOKEN` — from LINE Developers Console (Messaging API)
+   - `LINE_LOGIN_CHANNEL_ID` — from LINE Developers Console (LINE Login, Sprint 5)
+   - `LINE_LOGIN_CHANNEL_SECRET` — from LINE Developers Console (LINE Login, Sprint 5)
+   - `LINE_LOGIN_CALLBACK_URL` — `https://your-app.onrender.com/api/line/oauth/callback`
+   - `FLASK_SECRET_KEY` — random ≥32 chars (gen ด้วย `python -c "import secrets; print(secrets.token_urlsafe(48))"`)
    - `DATABASE_URL` — from Render Postgres (Internal URL)
+   - `GEMINI_API_KEY` — (optional) for AI insights
+   - `ANTHROPIC_API_KEY` — (optional) AI fallback
    - `PYTHON_VERSION` — `3.11`
 6. **Create Web Service** → wait ~3 minutes for deploy
 7. **Set LINE Webhook URL**: `https://your-app.onrender.com/webhook/line`
@@ -236,18 +272,24 @@ Open http://localhost:5000
 |--------|------|-------------|
 | `GET` | `/` | Serve React app (SPA) |
 | `GET` | `/api/health` | Health check |
-| `POST` | `/api/auth/login` | Login / register (upsert by email) |
-| `GET` | `/api/transactions` | List user transactions |
-| `POST` | `/api/transactions` | Bulk insert transactions |
-| `POST` | `/api/imports` | Create import record |
-| `GET` | `/api/imports` | List user imports |
-| `POST` | `/api/parse-pdf` | Parse bank statement PDF |
-| `GET` | `/api/notifications` | List notifications |
-| `POST` | `/api/notifications` | Create notification |
-| `POST` | `/api/notifications/mark-read` | Mark all as read |
-| `GET` | `/api/preferences/<id>` | Get user preferences |
-| `PUT` | `/api/preferences/<id>` | Update preferences |
+| `POST` | `/api/auth/login` | Login / register (upsert by email) + trigger lazy cleanup |
+| `GET/PATCH/DELETE` | `/api/users/<id>` | Profile / update name+display_name / schedule 30-day delete |
+| `POST` | `/api/users/<id>/cancel-delete` | Abort scheduled hard-delete |
+| `GET` | `/api/users/<id>/export-csv` | PDPA data portability |
+| `GET` | `/api/line/status` | LINE link status |
+| `POST` | `/api/line/unlink` | LINE unlink |
+| `GET` | `/api/line/oauth/url` | LINE Login OAuth URL (Sprint 5) |
+| `GET` | `/api/line/oauth/callback` | LINE Login OAuth callback (Sprint 5) |
+| `GET/POST` | `/api/transactions` | List / bulk insert + Learning Loop |
+| `PATCH` | `/api/transactions/<id>` | Edit category + save override |
+| `GET/POST/DELETE` | `/api/imports[/<id>]` | History / create / undo last |
+| `POST` | `/api/parse-pdf` | Parse bank statement PDF (รองรับ encrypted + password) |
+| `GET/POST` | `/api/notifications` | List notifications + mark-read |
+| `GET/PUT` | `/api/preferences/<id>` | Get/update preferences (+ theme light/dark) |
+| `POST` | `/api/reset` | Wipe txs/imports/notifs (keep budget/account/LINE) |
+| `POST` | `/api/ai/complete` | AI provider chain |
 | `POST` | `/webhook/line` | LINE Messaging API webhook |
+| `POST` | `/api/admin/run-grace-cleanup` | Token-gated, default-closed (Sprint 5) |
 
 ---
 
@@ -272,6 +314,13 @@ Open http://localhost:5000
 - ✅ SQL injection ป้องกันโดย SQLAlchemy ORM (parameterized queries)
 - ✅ CORS handled by Flask
 - ✅ Database connection ใช้ Internal URL (ไม่ผ่าน public internet)
+- ✅ **LINE Login OAuth** state JWT (10-min TTL + purpose claim) → กัน CSRF
+- ✅ **LINE Login id_token verify** (HS256 + channel secret) → ยืนยันตัวตนจาก LINE
+- ✅ **Theme injection guard** — whitelist `'light'/'dark'` strict (กัน CSS injection ผ่าน data-theme)
+- ✅ **PII protection** — pre-push REW review + secret scan
+- ✅ **Encrypted PDF buffer** — TTL 5 นาที + max 3 attempts (กัน brute force)
+
+ดูเพิ่มเติม: [docs/known-issues.md](docs/known-issues.md) — Demo-grade vs Production-grade transparency
 
 ---
 
@@ -281,9 +330,16 @@ Educational project — สำหรับการศึกษา (Sprint 3, Te
 
 ---
 
-## 👥 Author
+## 👥 Team 04 — Sprint 3/5
 
-- **WA** ([@wataroz](https://github.com/wataroz)) — Backend + Frontend + LINE bot integration + Deploy
+- **WA** ([@wataroz](https://github.com/wataroz)) — Backend + Parser EN/SCB + LINE Login OAuth + Deploy
+- **BEST** — UX/UI + Mobile responsive + Brand v2 + Dual-theme + Stacking context fix
+- **ACHI** — Frontend + Settings 4 tabs + Theme picker + Cancel Delete banner
+- **AJ** — Backend + PDPA (Hard delete + Grace + Export CSV) + Lazy cleanup + Display name
+- **REW** — Pre-push review + Secret/PII guard + Theme injection guard
+- **NOTE** — Notion sync + Sprint summary
+
+ดูเพิ่ม: [Individual Contribution log](docs/evidence-log-sprint5.md)
 
 ---
 
