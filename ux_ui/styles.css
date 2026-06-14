@@ -4064,6 +4064,20 @@ html, body {
     scrollbar-width: none;
     padding: 8px !important;
     gap: 4px !important;
+    /* Edge fade — visual cue ว่า scroll ได้ (ทั้งสองข้างเริ่มจาก dual mask, JS-free)
+       ขอบขวา fade 28px → บอกชัดว่ามี tab ต่อ */
+    -webkit-mask-image: linear-gradient(
+      to right,
+      #000 0,
+      #000 calc(100% - 28px),
+      transparent 100%
+    );
+            mask-image: linear-gradient(
+      to right,
+      #000 0,
+      #000 calc(100% - 28px),
+      transparent 100%
+    );
   }
 
   .settings-sidebar::-webkit-scrollbar { display: none; }
@@ -4072,7 +4086,8 @@ html, body {
 
   .settings-tab {
     flex-direction: row !important;
-    padding: 10px 14px !important;
+    padding: 10px 12px !important;
+    gap: 8px !important;
     min-width: max-content;
     flex: 0 0 auto !important;
     font-size: 13px !important;
