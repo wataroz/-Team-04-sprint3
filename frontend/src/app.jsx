@@ -535,8 +535,8 @@ function App() {
   const greetKey = hour < 12 ? 'greeting_morn' : hour < 17 ? 'greeting_noon' : 'greeting_eve';
 
   const viewTitles = {
-    overview: lang === 'th' ? { crumb: 'ภาพรวม · พฤษภาคม 2026', heading: <>{t(I18N[greetKey], lang)} <em style={{ fontFamily: "\"Instrument Serif\"" }}>{user.name}</em></> } :
-    { crumb: 'Overview · May 2026', heading: <>{t(I18N[greetKey], lang)} <em>{user.name}</em></> }
+    overview: lang === 'th' ? { crumb: 'ภาพรวม · พฤษภาคม 2026', heading: <>{t(I18N[greetKey], lang)} <em style={{ fontFamily: "\"Instrument Serif\"" }}>{user.display_name || user.name}</em></> } :
+    { crumb: 'Overview · May 2026', heading: <>{t(I18N[greetKey], lang)} <em>{user.display_name || user.name}</em></> }
   };
 
   return (
@@ -585,9 +585,9 @@ function App() {
         </div>
 
         <div className="sidebar-footer">
-          <div className="avatar">{(user.name || 'P').charAt(0).toUpperCase()}</div>
+          <div className="avatar">{((user.display_name || user.name) || 'P').charAt(0).toUpperCase()}</div>
           <div>
-            <div className="user-name">{user.name || t(I18N.user_name, lang)}</div>
+            <div className="user-name">{user.display_name || user.name || t(I18N.user_name, lang)}</div>
             <div className="user-meta">{user.email || t(I18N.user_role, lang)}</div>
           </div>
           <button
