@@ -701,6 +701,7 @@ function App() {
         <Insights
           state={state}
           openChat={() => setChatOpen(true)}
+          setView={setView}
           aiResult={aiResult}
           setAiResult={setAiResult}
           analyzing={analyzing}

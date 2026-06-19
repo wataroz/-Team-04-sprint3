@@ -1735,14 +1735,15 @@ function Upload({ state, addTxs, setPendingImport, lastImport, deleteLastImport 
 // ─────────────────────────────────────────────────────────────
 // AI Insights
 // ─────────────────────────────────────────────────────────────
-function Insights({ state, openChat, aiResult, setAiResult, analyzing, setAnalyzing }) {
+function Insights({ state, openChat, setView, aiResult, setAiResult, analyzing, setAnalyzing }) {
   const { lang, currency } = state;
 
   // Auto-derive insights from the live tx list so this page stays in sync
   // with Dashboard / Transactions after a statement import. AI result
-  // (when present) wins; otherwise compute from real data; otherwise demo.
+  // (when present) wins; otherwise compute from real data; otherwise show
+  // an empty state — never fake mock data (would mislead the user).
   const derived = useMemo(() => deriveInsightCards(state.txs, lang), [state.txs, lang]);
-  const data = aiResult || (derived && derived.items && derived.items.length > 0 ? derived : SAMPLE_INSIGHTS);
+  const data = aiResult || (derived && derived.items && derived.items.length > 0 ? derived : null);
 
   // Rotating "analyzing" message
   const messagesTH = [
@@ -1854,6 +1855,21 @@ Provide 4-6 items, varied across warn/good/info.\n\nData:\n${summary}\n\nReply w
           <div style={{ marginTop: 18, color: 'var(--ink-subtle)', fontSize: 12, letterSpacing: 2, textTransform: 'uppercase' }}>
             MoneyMind
           </div>
+        </div> :
+      !data ?
+      <div className="card" style={{ textAlign: 'center', padding: '48px 24px' }}>
+          <div style={{ fontSize: 48, marginBottom: 16, opacity: 0.6 }}>📊</div>
+          <h3 style={{ margin: '0 0 12px', fontSize: 18 }}>
+            {lang === 'th' ? 'ยังไม่มีข้อมูลให้วิเคราะห์' : 'No data to analyze yet'}
+          </h3>
+          <p style={{ color: 'var(--ink-subtle)', fontSize: 13.5, margin: '0 0 24px', maxWidth: 380, marginLeft: 'auto', marginRight: 'auto' }}>
+            {lang === 'th' ?
+              'นำเข้า Statement จากธนาคาร เพื่อให้ AI เริ่มวิเคราะห์การใช้เงินของคุณ' :
+              'Import a bank statement to let AI start analyzing your spending.'}
+          </p>
+          <button className="btn btn-accent" onClick={() => setView && setView('upload')}>
+            {Ic.upload}{lang === 'th' ? 'นำเข้า Statement' : 'Import statement'}
+          </button>
         </div> :
 
       <>
