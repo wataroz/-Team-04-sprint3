@@ -1318,14 +1318,14 @@ def api_set_prefs(user_id: int):
 #   3) Neither set / both fail → return {"text": ""} so the frontend's
 #      null-fallback path renders cleanly instead of throwing.
 
-# NOTE: ใช้ gemini-flash-latest alias เพราะ google-generativeai SDK
-# (legacy, deprecated โดย Google เอง) ใช้ endpoint v1beta ซึ่ง Google
-# ถอน gemini-1.5-flash-002 และ gemini-1.5-flash ออกแล้ว (ทดสอบบน
-# production แล้วเจอ 404). 2.0-flash ใช้ได้แต่ free tier daily quota
-# ตึงเกินไป (เคยเจอ 429). flash-latest = alias ที่ Google เลือก model
-# ปัจจุบันให้ ทำให้รอด deprecation. ถ้าอยาก pin model จริงต้องอัปเกรด
-# SDK เป็น google-genai ใหม่ (ดู docs ของ Google).
-_GEMINI_MODEL = "gemini-flash-latest"
+# NOTE: pin model "gemini-2.5-flash" ตรงๆ — เลิกใช้ alias "gemini-flash-latest"
+# เพราะ Google เปลี่ยน route alias ไป gemini-3.5-flash (preview) ที่ daily
+# quota แค่ 20 req/วัน (จากเดิม 1500) → ใช้งาน demo จริงไม่พอ.
+# 2.5-flash = stable model + free tier RPD 1500 + RPM 15 (พอสำหรับ demo).
+# 1.5/2.0 ใช้ไม่ได้แล้ว (Google ถอน endpoint v1beta ตั้งแต่ Sprint 3).
+# ถ้าวันหลัง 2.5-flash ถูก deprecate → ตรวจ https://ai.google.dev/models
+# แล้ว bump เป็น 3.5-flash-stable หรือใหม่กว่า (ห้ามใช้ -latest alias อีก).
+_GEMINI_MODEL = "gemini-2.5-flash"
 _ANTHROPIC_MODEL = "claude-3-5-sonnet-latest"
 _AI_MAX_TOKENS = 2048
 _AI_MAX_PROMPT_CHARS = 12000  # guard against runaway / abusive prompts
