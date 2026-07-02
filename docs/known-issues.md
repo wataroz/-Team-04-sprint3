@@ -11,7 +11,7 @@
 | # | Issue | กระทบ | Severity | แผน |
 |---|---|---|---|---|
 | 1 | Cold-start ~30-60 วินาที (hosting แบบ free tier) | Request แรกหลังไม่มี traffic 15 นาที ช้า | Medium | ย้าย hosting แบบจ่ายเงิน + keep-alive ping หลัง demo |
-| 2 | Database sandbox หมดอายุ ~27 มิ.ย. 2569 | Database หยุดทำงาน | High | ย้ายไป Supabase (database cloud อีกเจ้า — เปลี่ยน connection string จุดเดียว) ปลายเดือน |
+| 2 | ~~Database sandbox หมดอายุ ~27 มิ.ย. 2569~~ ✅ **ย้าย Supabase สำเร็จ 3 ก.ค. 2569** | (แก้แล้ว) — DB ใหม่บน Supabase Singapore Free tier | ~~High~~ Resolved | ย้ายเสร็จ (fresh start, Session pooler IPv4) — smoke test login/AI ผ่าน |
 | 3 | LINE Channel ยัง Developing mode | ใช้งานได้เฉพาะทีม + อาจารย์ (developer role) หรือใช้คำสั่ง email fallback | Medium | ขอ publish channel หลังเตรียม Privacy Policy + ToS เสร็จ (post-graduation) |
 | 4 | Google/Apple Sign-In ปุ่ม fake (ซ่อนอยู่) | SSO ของจริงยังไม่ wire | Low | OAuth จริง backlog |
 | 5 | ไม่มี real authentication (ใช้แค่ email — ไม่มี password) | เหมาะเฉพาะ demo/sandbox | Medium | ทำ password + OAuth จริง post-graduation |
@@ -33,7 +33,7 @@
 - LINE Channel published + Privacy Policy + ToS
 - Real authentication (password + Google OAuth wired จริง)
 - Custom domain + Render Starter plan ($7/month no cold start)
-- Supabase migration (Render Postgres หมดอายุ ~27 มิ.ย. 2569)
+- ~~Supabase migration~~ ✅ **ทำแล้ว 3 ก.ค. 2569** (fresh start, Session pooler Singapore)
 - Rate limit + monitoring (Sentry)
 - ProxyFix middleware (defense-in-depth สำหรับ HTTPS host_url)
 

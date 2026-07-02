@@ -115,7 +115,7 @@ https://moneymind-team-04-sprint3.onrender.com
 | Known Issue | กระทบ | Severity | แผน |
 |---|---|---|---|
 | Cold-start ~30-60 วินาที (hosting แบบ free tier) | Request แรกหลังไม่มี traffic 15 นาที ช้า | Medium | ย้าย hosting แบบจ่ายเงิน + keep-alive ping หลัง demo |
-| Database sandbox หมดอายุ ~27 มิ.ย. 2569 | Database หยุดทำงาน | High | ย้ายไป Supabase (database cloud อีกเจ้า — เปลี่ยน connection string จุดเดียว) ปลายเดือน |
+| ~~Database sandbox หมดอายุ ~27 มิ.ย. 2569~~ ✅ **ย้าย Supabase สำเร็จ 3 ก.ค. 2569** | (แก้แล้ว) DB ใหม่บน Supabase Singapore | ~~High~~ Resolved | ย้ายเสร็จ — fresh start + Session pooler (IPv4 สำหรับ Render Free) — smoke test login/AI ผ่าน |
 | LINE Channel ยัง Developing mode | ใช้งานได้เฉพาะทีม + อาจารย์ (developer role) หรือใช้คำสั่ง email fallback | Medium | ขอ publish channel หลังเตรียม Privacy Policy + ToS เสร็จ (post-graduation) |
 | Google/Apple Sign-In ปุ่ม fake (ซ่อนอยู่) | SSO ของจริงยังไม่ wire | Low | OAuth จริง backlog |
 | ไม่มี real authentication (ใช้แค่ email — ไม่มี password) | เหมาะเฉพาะ demo/sandbox | Medium | ทำ password + OAuth จริง post-graduation |
@@ -127,7 +127,7 @@ https://moneymind-team-04-sprint3.onrender.com
 หลัง demo จบ ทีมมีงานเก็บต่อ:
 
 ### Infrastructure
-- ย้าย DB → **Supabase** (Postgres ฟรีถาวร — ก่อนหมดอายุ ~27 มิ.ย. 2569)
+- ~~ย้าย DB → Supabase~~ ✅ **ทำแล้ว 3 ก.ค. 2569** (Postgres ฟรีถาวร, Singapore, Session pooler)
 - เสริม **GitHub Actions cron** ยิง cleanup endpoint ทุก 24h (เผื่อไม่มี user login 30+ วัน)
 - ตั้ง **UptimeRobot keep-alive** กัน cold start (ฟรี + ไม่ต้องจ่าย Render Starter)
 - เสริม `ProxyFix` middleware (defense-in-depth สำหรับ HTTPS host_url)

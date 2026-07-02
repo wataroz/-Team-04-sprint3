@@ -25,6 +25,11 @@ design_pkg/
 *.tar.gz
 *.zip
 
+# ─── Preview snapshots & pitch deck ────────────────────────────────────────
+# .preview/ = local Claude Preview screenshots; pitch deck stays local.
+.preview/
+*.pptx
+
 # ─── Python ─────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
