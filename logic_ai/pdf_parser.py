@@ -35,6 +35,16 @@ except ImportError:
 log = logging.getLogger(__name__)
 
 
+# ============================================================
+# Password error detection (รหัส PDF)
+# ------------------------------------------------------------
+# ธนาคารบางเจ้าส่ง statement เป็น PDF ที่ล็อกรหัส (เช่น เลขบัตร ปชช.
+# 4 ตัวท้าย / วันเกิด). pdfminer โยน error ต่างรูปแบบกันตามเวอร์ชัน
+# เราจึงตรวจหลายชั้น (isinstance → __cause__ → args → sniff ข้อความ)
+# เพื่อให้แยกได้ว่า "ติดรหัสแต่ยังไม่ใส่" กับ "ใส่รหัสผิด" แล้วบอก user
+# เป็นภาษาไทย. ห้าม log ค่ารหัสเด็ดขาด (อ่านแค่ข้อความ exception).
+# ============================================================
+
 # Substrings (lowercase) used to detect password errors when the real
 # pdfminer class is unavailable or wrapped in a generic exception.
 # Each tuple = AND-group; any tuple matching → password error.
@@ -80,7 +90,16 @@ def _is_password_error(exc: BaseException) -> bool:
     return False
 
 
-# ─── Text extraction ────────────────────────────────────────────────────────
+# ============================================================
+# Text extraction (ดึงข้อความจาก PDF)
+# ------------------------------------------------------------
+# หัวใจของ parser: pdfplumber ให้ "คำ" พร้อมพิกัด (x,y) มา เราจับกลุ่ม
+# คำที่อยู่บรรทัดเดียวกันด้วยพิกัด Y (ปัดเศษ) แล้วเรียงซ้าย→ขวาด้วย X
+# เพื่อประกอบกลับเป็นบรรทัดข้อความ (เลียนแบบ layout ของ pdf.js ฝั่ง JS).
+# statement ไทยมักปนเลขไทย/อังกฤษ + ช่องว่างเพี้ยน → normalize \s+ เป็น
+# ช่องว่างเดียวก่อนเสมอ. NOTE: PDF ที่เป็นภาพสแกน pdfplumber อ่านไม่ออก
+# → จะได้ข้อความว่าง (parser คืน list ว่าง ไม่ crash).
+# ============================================================
 
 def extract_pdf_text(file_bytes: bytes, password: str | None = None) -> str:
     """Extract text from PDF, line-grouped by Y coordinate (matches pdf.js layout).
@@ -114,6 +133,11 @@ def extract_pdf_text(file_bytes: bytes, password: str | None = None) -> str:
         for page_num, page in enumerate(pdf.pages, start=1):
             log.info("extract page %d/%d start", page_num, total_pages)
             t0 = time.perf_counter()
+            # extract_words = ดึง "คำ" ทีละคำพร้อมพิกัด (x0 = ขอบซ้าย, top = ขอบบน).
+            # x_tolerance/y_tolerance = 2 → คำที่ห่างกัน ≤ 2px ถือว่าอยู่ติดกัน/
+            # บรรทัดเดียวกัน (เผื่อสระ-วรรณยุกต์ไทยทำให้ระยะเพี้ยนเล็กน้อย).
+            # keep_blank_chars=False = ทิ้งช่องว่างเปล่า, use_text_flow=False =
+            # ไม่เชื่ออันดับการอ่านจากไฟล์ (จัดเรียงเองด้วยพิกัดด้านล่างแทน).
             words = page.extract_words(
                 x_tolerance=2,
                 y_tolerance=2,
@@ -125,10 +149,16 @@ def extract_pdf_text(file_bytes: bytes, password: str | None = None) -> str:
                 "extract page %d done: %d words, %.2fs",
                 page_num, len(words), duration,
             )
+            # จับกลุ่มคำเป็น "บรรทัด" ด้วยพิกัด Y: round(top) ปัดเศษให้คำที่อยู่
+            # ระดับเดียวกัน (ต่างกันแค่เศษ px) ตกลง key เดียวกัน. dict นี้ =
+            # {ค่า y : [(x0, ข้อความ), ...]}. setdefault สร้าง list ว่างถ้ายังไม่มี key.
             lines: dict[int, list[tuple[float, str]]] = {}
             for w in words:
                 y = round(w["top"])
                 lines.setdefault(y, []).append((w["x0"], w["text"]))
+            # ไล่ทีละบรรทัดจากบนลงล่าง (sorted keys) → ในบรรทัดเรียงคำซ้าย→ขวา
+            # ด้วย x0 → ต่อเป็นสตริงเดียว. re.sub(r"\s+", " ", ...) = normalize
+            # ช่องว่าง (ยุบ space/tab/ซ้อนหลายตัวให้เหลือช่องเดียว) กัน layout เพี้ยน.
             for y in sorted(lines.keys()):
                 items = sorted(lines[y], key=lambda t: t[0])
                 line = re.sub(r"\s+", " ", " ".join(t[1] for t in items)).strip()
@@ -138,9 +168,21 @@ def extract_pdf_text(file_bytes: bytes, password: str | None = None) -> str:
     return "\n".join(out)
 
 
-# ─── Bank detection ─────────────────────────────────────────────────────────
+# ============================================================
+# Bank detection (ระบุว่าเป็น statement ธนาคารไหน)
+# ------------------------------------------------------------
+# ต้อง deterministic เสมอ — จับด้วย keyword เฉพาะจากหัวกระดาษ (1000
+# ตัวอักษรแรก) ของแต่ละธนาคาร (ชื่อธนาคารไทย/อังกฤษ + ชื่อระบบ เช่น
+# K PLUS, MyMo). ห้ามใช้ random/LLM เด็ดขาด เพราะผลต้องคงที่ทุกครั้ง.
+# ลำดับการเช็ก: SCB → KTB → GSB → KBank; keyword แต่ละเจ้าไม่ทับกัน
+# จึงไม่กำกวม. ไม่เข้าเงื่อนไขใด → "unknown" (ปล่อยให้ fallback ลองทุก
+# parser ใน parse_statement).
+# ============================================================
 
 def detect_bank(text: str) -> str:
+    # head = 1000 ตัวอักษรแรกพอ (keyword ชื่อธนาคารอยู่หัวกระดาษเสมอ + เร็วกว่า
+    # สแกนทั้งเล่ม). re.search หาที่ไหนก็ได้ในสตริง, `|` = "หรือ" (จับตัวใดตัวหนึ่ง),
+    # re.I = IGNORECASE ไม่สนตัวพิมพ์เล็ก/ใหญ่ (BANK = bank).
     head = text[:1000]
     if re.search(r"ธนาคารไทยพาณิชย์|THE SIAM COMMERCIAL BANK|STATEMENT OF SAVING ACCOUNT", head, re.I):
         return "scb"
@@ -153,7 +195,22 @@ def detect_bank(text: str) -> str:
     return "unknown"
 
 
-# ─── Category inference ─────────────────────────────────────────────────────
+# ============================================================
+# Category inference (จัดหมวดอัตโนมัติ)
+# ------------------------------------------------------------
+# _CATEGORY_RULES เป็น list เรียงลำดับของ (หมวด, regex) — "แมตช์ตัวแรก
+# ชนะ" ดังนั้น "ลำดับ = ความสำคัญ" ห้ามสลับมั่ว. เหตุผลของลำดับ:
+#   health → food → transport → entertain → home → groceries → shopping
+#   - health มาก่อน groceries: ร้านยา (เช่น วัตสัน/บูทส์) ขายของชำด้วย
+#     ถ้าไม่ดักก่อนจะโดน groceries กลืน → จัดเป็น "สุขภาพ" ถูกกว่า
+#   - food มาก่อน transport: food-delivery หลายเจ้าใช้แบรนด์เดียวกับ
+#     ride-hailing (เช่น "Grab Food" vs "Grab") → ต้องดัก *Food ก่อน
+#     ไม่งั้นไปตกหมวดเดินทาง
+#   - groceries มาก่อน shopping: ร้านสะดวกซื้อ/ซูเปอร์ทับกับคำ generic
+#     ("market"/"store") ที่ shopping จับ → ให้ตัวเฉพาะกว่าชนะก่อน
+# สัญญา (contract): 8 หมวดนี้ผูกกับ frontend/data.js + DB — ห้ามเพิ่ม/ลบ
+# หมวดในไฟล์นี้คนเดียว ต้องคุยกับ ACHI/AJ ก่อน. กำกวม → ตกไป "other".
+# ============================================================
 
 # Ordered list of (category, regex) pairs. First match wins, so put more
 # specific / higher-priority patterns first (e.g. health before groceries so
@@ -169,6 +226,10 @@ _CATEGORY_RULES: list[tuple[str, re.Pattern]] = [
     # Health & pharmacy (priority over groceries so Watsons/Boots win)
     (
         "health",
+        # จับ: ร้านยา/โรงพยาบาล/คลินิก/ประกันสุขภาพ (ทั้งอังกฤษและไทย).
+        # ตัวอย่างที่ match: "ร้านยาตัวอย่าง", "คลินิกทันตกรรม", "hospital".
+        # \b = ขอบคำ (word boundary) — กันคำสั้นอังกฤษไปโดนกลางคำอื่นโดยบังเอิญ.
+        # ฝั่งไทยไม่ใส่ \b เพราะอักษรไทยไม่มีขอบคำแบบ ASCII.
         re.compile(
             r"\b(watsons?|boots|pharmacy|drug\s*store|hospital|clinic|dental|"
             r"bumrungrad|samitivej|bnh|bangkok\s*hospital|mahidol|rama|"
@@ -183,6 +244,11 @@ _CATEGORY_RULES: list[tuple[str, re.Pattern]] = [
     # transport so "Bolt Food", "Grab Food", "Lineman" land in food)
     (
         "food",
+        # จับ: ฟู้ดเดลิเวอรี/ร้านอาหาร/คาเฟ่/เครื่องดื่ม.
+        # ตัวอย่าง: "ร้านอาหารตัวอย่าง", "กาแฟเย็น", "grab food".
+        # บรรทัด "เซเว่น(?=.*(?:ร้าน|อาหาร))" = lookahead (?=...) จับ "เซเว่น"
+        # เฉพาะเมื่อมีคำว่า ร้าน/อาหาร ตามหลัง กัน 7-11 ทั่วไปหลุดมาเป็น food
+        # (ปกติ 7-11 ต้องตกหมวด groceries).
         re.compile(
             r"\b(grab\s*food|grabfood|food\s*panda|foodpanda|line\s*man|lineman|"
             r"robinhood|bolt\s*food|wongnai|food\s*court|"
@@ -214,6 +280,10 @@ _CATEGORY_RULES: list[tuple[str, re.Pattern]] = [
     # Transport / fuel / ride-hailing / airlines (grab/bolt only if not "food")
     (
         "transport",
+        # จับ: แท็กซี่/รถไฟฟ้า/ปั๊มน้ำมัน/สายการบิน.
+        # ตัวอย่าง: "แท็กซี่", "ปั๊มน้ำมัน", "bts", "thai airways".
+        # grab(?!\s*food) = negative lookahead (?!...) จับ "grab" เฉพาะที่
+        # *ไม่* ตามด้วย "food" (คู่กับหมวด food ด้านบนที่ดัก Grab Food ไปแล้ว).
         re.compile(
             r"\b(grab(?!\s*food)|bolt(?!\s*food)|taxi|uber|gojek|"
             r"bts|mrt|arl|airport\s*rail|skytrain|sky\s*train|expressway|tollway|"
@@ -231,6 +301,10 @@ _CATEGORY_RULES: list[tuple[str, re.Pattern]] = [
     # Entertainment / subscriptions / cinema / gaming
     (
         "entertain",
+        # จับ: สตรีมมิ่ง/โรงหนัง/เกม/คอนเสิร์ต/คาราโอเกะ.
+        # ตัวอย่าง: "netflix", "โรงหนังเมเจอร์", "steam", "คอนเสิร์ต".
+        # (?:...)? = non-capturing group + optional เช่น "youtube premium" หรือ
+        # "youtube" เฉยๆ ก็ match (?: คือกลุ่มที่ไม่เก็บค่าไว้ ใช้แค่จัดกลุ่ม).
         re.compile(
             r"\b(netflix|spotify|youtube(?:\s*premium|\s*music)?|disney\+?|"
             r"disney\s*plus|hbo|apple\s*music|apple\s*tv|prime\s*video|"
@@ -247,6 +321,9 @@ _CATEGORY_RULES: list[tuple[str, re.Pattern]] = [
     # Home & bills / utilities / rent / internet / mobile
     (
         "home",
+        # จับ: ค่าน้ำ/ค่าไฟ/เน็ต/ค่าเช่า/บิลมือถือ/ค่าธรรมเนียมธนาคาร.
+        # ตัวอย่าง: "ค่าไฟฟ้า", "ค่าเช่าหอพัก", "ais fibre", "จ่ายบิล".
+        # electric(?:ity)? = จับได้ทั้ง "electric" และ "electricity".
         re.compile(
             r"\b(rent|electric(?:ity)?\s*bill|water\s*bill|wifi|internet|"
             r"tot|ais(?:\s*fibre|\s*postpaid|\s*prepaid)?|true(?:move|\s*online|"
@@ -266,6 +343,10 @@ _CATEGORY_RULES: list[tuple[str, re.Pattern]] = [
     # Groceries / supermarkets / convenience stores
     (
         "groceries",
+        # จับ: ร้านสะดวกซื้อ/ซูเปอร์มาร์เก็ต/ตลาด.
+        # ตัวอย่าง: "เซเว่น", "โลตัส", "big c", "แม็คโคร".
+        # 7[-\s]?eleven = ยอมมี "-" หรือช่องว่างคั่นหรือไม่มีก็ได้ (? = 0 หรือ 1 ตัว)
+        # → match "7-eleven", "7 eleven", "7eleven".
         re.compile(
             r"\b(7[-\s]?eleven|7[-\s]11|seven\s*eleven|family\s*mart|familymart|lawson|"
             r"mini\s*big\s*c|"
@@ -284,6 +365,10 @@ _CATEGORY_RULES: list[tuple[str, re.Pattern]] = [
     # Shopping / marketplaces / department stores / fashion
     (
         "shopping",
+        # จับ: มาร์เก็ตเพลส/ห้างสรรพสินค้า/แฟชั่น/ร้านค้าทั่วไป.
+        # ตัวอย่าง: "shopee", "เซ็นทรัล", "uniqlo", "ร้านค้าตัวอย่าง".
+        # เป็น rule ท้ายสุด (คำ generic สุด เช่น mall/store/ร้านค้า) จึงต้องอยู่
+        # หลัง groceries ที่เฉพาะเจาะจงกว่า — ไม่งั้นจะกลืนร้านสะดวกซื้อไปหมด.
         re.compile(
             r"\b(shopee|lazada|jd\s*central|kaidee|amazon(?:\.com)?|aliexpress|"
             r"uniqlo|h&m|zara|muji|nike|adidas|puma|new\s*balance|"
@@ -303,6 +388,11 @@ _CATEGORY_RULES: list[tuple[str, re.Pattern]] = [
 ]
 
 
+# _normalize เตรียม merchant ก่อนยิงเข้า regex หมวด: lowercase + ยุบช่องว่าง
+# + แทนเครื่องหมายที่มักคั่นชื่อแบรนด์ (. _ / \ |) ด้วยช่องว่าง เพื่อให้
+# "7-Eleven" / "7.11" / "C.P." ยังแมตช์ pattern เดิมได้.
+# (คนละตัวกับ _normalize_merchant ของ Learning Loop ที่อยู่ backend/app.py —
+#  ตัวนั้นใช้ทำ key จำหมวดที่ user แก้เอง; ไฟล์นี้ไม่ยุ่งกับ override hook.)
 def _normalize(s: str) -> str:
     """Lowercase, collapse whitespace, strip leading/trailing punctuation."""
     if not s:
@@ -322,9 +412,12 @@ def categorize(merchant: str, _type: str, incoming: bool) -> str:
     ordered keyword rules. Unknown merchants fall back to 'other' — never
     raises so callers can always trust the result.
     """
+    # เงินเข้า → หมวด "income" เสมอ (ไม่ต้องเดาจากชื่อร้าน).
     if incoming:
         return "income"
 
+    # normalize ชื่อร้านก่อน (lowercase + ยุบช่องว่าง + แทนเครื่องหมายคั่น) แล้ว
+    # ยิงเข้า _CATEGORY_RULES ทีละตัวตามลำดับ — "แมตช์ตัวแรกชนะ" (return ทันที).
     m = _normalize(merchant)
     if not m:
         return "other"
@@ -332,11 +425,31 @@ def categorize(merchant: str, _type: str, incoming: bool) -> str:
     for cat, pat in _CATEGORY_RULES:
         if pat.search(m):
             return cat
+    # ไม่โดน rule ไหนเลย → "other" (safe fallback — ฟังก์ชันนี้ไม่ throw เด็ดขาด).
     return "other"
 
 
-# ─── K-Bank parser ──────────────────────────────────────────────────────────
+# ============================================================
+# K-Bank parser (กสิกร / K PLUS)
+# ------------------------------------------------------------
+# รูปแบบแถว KBank: <วันที่ DD-MM-YY> <เวลา> <action> <จำนวน> <ยอดคงเหลือ>
+# <รายละเอียด>. จุดต่างจากธนาคารอื่น:
+#   - action มีได้ 2 คำ (โดยเฉพาะ statement อังกฤษ) เช่น "Transfer
+#     Withdrawal" / "QR Transfer" → group ที่ 5 (คำที่สอง) เป็นตัวบอก
+#     ทิศทางเงินเข้า/ออก ถ้ามี; ถ้าไม่มีใช้ group 4
+#   - รายละเอียดมักล้นไปบรรทัดถัดไป → เรา "กาว" (glue) บรรทัดถัดไปได้ไม่
+#     เกิน 2 บรรทัด และหยุดเมื่อเจอบรรทัดวันที่ใหม่/บรรทัด noise/ยาวเกิน 90
+#   - KBank แทรก noise หน้า merchant เยอะ (prefix ช่องทาง + "Ref X####"
+#     ของ QR/bill payment) → strip ออกเป็นชั้นๆ ให้เหลือชื่อร้านจริง
+#     เช่น "เพื่อชำระ Ref X#### <ร้าน>" / "Ref: #### <ร้าน>" → "<ร้าน>"
+# ============================================================
 
+# _KBANK_LINE จับทั้งแถวธุรกรรม แล้วแยกเป็น capture group (กลุ่มในวงเล็บที่ regex
+# "จำ" ค่าไว้ ดึงด้วย .group(n) ทีหลัง):
+#   g1-g3 = วัน-เดือน-ปี (DD-MM-YY) · g4 = action หลัก · g5 = action รอง (อาจไม่มี)
+#   g6 = จำนวนเงิน · g7 = รายละเอียด (ชื่อร้าน/โน้ต)
+# ตัวอย่างแถว: "01-02-24 13:45 Transfer Withdrawal 100.00 5,000.00 ร้านตัวอย่าง"
+#   → g1=01 g2=02 g3=24 g4=Transfer g5=Withdrawal g6=100.00 g7=ร้านตัวอย่าง
 _KBANK_LINE = re.compile(
     r"^(\d{2})-(\d{2})-(\d{2})\s+\d{2}:\d{2}\s+"
     # Primary action token: Thai keywords or English channel/action words.
@@ -347,11 +460,16 @@ _KBANK_LINE = re.compile(
     r"(?:\s+(Withdrawal|Withdraw|Deposit|Transfer|Payment))?\s+"
     r"([\d,]+\.\d{2})\s+[\d,]+\.\d{2}\s+(.+)$"
 )
+# ใช้เช็คว่าบรรทัดถัดไปเป็น "แถววันที่ใหม่" หรือยัง (ขึ้นต้นด้วย DD-MM-YY)
+# → ถ้าใช่ ต้องหยุดกาว desc ข้ามแถว ไม่งั้นชื่อร้านจะเลอะไปแถวถัดไป.
 _KBANK_DATE_LINE = re.compile(r"^\d{2}-\d{2}-\d{2}\s")
+# บรรทัด noise ที่ต้องข้าม (หัวตาราง/สรุปยอด/เลขหน้า) — ห้ามกาวต่อท้าย desc.
 _KBANK_SKIP = re.compile(
     r"^(KBPDF|ออกโดย|หน้าที่|PAGE/OF|ที่ DD\.|ชื่อบัญชี|สาขา|เลขที่|รอบระหว่าง|รวมถอน|รวมฝาก|"
     r"ยอดยกไป|ยอดคงเหลือ|วันที่ เวลา|วันที่มีผล|ช่องทาง|\(บาท\)|รายละเอียด|--\s*\d+\s*of|\d+/\d+\(\d+\))"
 )
+# set ของ action ที่แปลว่า "เงินเข้า" → ใช้พลิกเครื่องหมายจำนวนให้เป็นบวก
+# และ route ไปหมวด income (เช็คด้วย `in` ซึ่งเร็วเพราะเป็น set).
 _KBANK_INCOMING = {"รับโอนเงิน", "ฝาก", "ฝากเงินสด", "ดอกเบี้ย", "Deposit", "Interest"}
 
 
@@ -366,6 +484,9 @@ def parse_kbank(raw: str) -> list[dict]:
             continue
 
         desc = m.group(7)
+        # "กาว" (glue) รายละเอียดที่ล้นไปบรรทัดถัดไป — KBank ตัดชื่อร้านยาวขึ้น
+        # บรรทัดใหม่บ่อย. ต่อได้ไม่เกิน 2 บรรทัด และหยุดทันทีเมื่อเจอแถววันที่ใหม่
+        # / บรรทัด noise / บรรทัดยาวเกิน 90 (น่าจะเป็นแถวอื่นไม่ใช่ส่วนต่อ desc).
         j = i + 1
         glued = 0
         while j < len(lines) and glued < 2:
@@ -396,6 +517,8 @@ def parse_kbank(raw: str) -> list[dict]:
         date = f"20{m.group(3)}-{m.group(2).zfill(2)}-{m.group(1).zfill(2)}"
 
         merchant = desc
+        # ลอก noise หน้าชื่อร้านทีละชั้น (KBank ใส่ prefix ช่องทางเยอะ):
+        # ชั้นที่ 1 = ชื่อแอป/ช่องทาง (K PLUS, ATM, ตู้ฯ, ชื่อธนาคารอื่น) ที่ขึ้นต้น desc.
         merchant = re.sub(
             r"^(K PLUS|EDC/K SHOP/MYQR|MAKE by KBank|Internet/Mobile [A-Z]+|ATM[^\s]*|ตู้[^\s]*|"
             r"ต่างธนาคาร|MyMo by GHB|SCB EASY|Krungthai NEXT|Bualuang mBanking)\s*",
@@ -407,9 +530,12 @@ def parse_kbank(raw: str) -> list[dict]:
         merchant = re.sub(r"^เพื่อชำระ\s+Ref\.?\s*:?\s*X?\d+\s+", "", merchant, flags=re.I)
         merchant = re.sub(r"^Ref\.?\s*:?\s*X?\d+\s+", "", merchant, flags=re.I)
         merchant = re.sub(r"^เพื่อชำระ\s+", "", merchant, flags=re.I)
+        # ชั้นถัดไป: ลบ prefix "จาก/โอนไป <ตัวย่อธนาคาร> พร้อมเพย์ X####" (เลข
+        # บัญชีปิดบัง X#### ไม่ใช่ชื่อร้าน) + ลบ "(ชื่อบัญชี:...)" + สัญลักษณ์ "++".
         merchant = re.sub(r"^(จาก|โอนไป)\s+(?:[A-Z]{2,5}\s+)?(?:พร้อมเพย์\s+)?(?:X\d+\s+)?", "", merchant)
         merchant = re.sub(r"\(\s*ชื่อบัญชี:[^)]*\)?", "", merchant)
         merchant = merchant.replace("++", "")
+        # ปิดท้าย: ยุบช่องว่างที่เหลือจากการลบ + ตัดหัวท้าย.
         merchant = re.sub(r"\s+", " ", merchant).strip()
 
         txs.append({
@@ -423,8 +549,25 @@ def parse_kbank(raw: str) -> list[dict]:
     return txs
 
 
-# ─── GSB parser ─────────────────────────────────────────────────────────────
+# ============================================================
+# GSB parser (ออมสิน / MyMo)
+# ------------------------------------------------------------
+# รูปแบบแถว GSB: <วันที่ DD/MM/YYYY (พ.ศ.)> <รายละเอียด> <จำนวน> <ยอด
+# คงเหลือ> <เลขอ้างอิง 2 ชุด>. จุดต่าง:
+#   - ปีเป็น พ.ศ. → ต้อง -543 เป็น ค.ศ.
+#   - รายละเอียดเป็นรหัสช่องทาง/marker ("MyMo", "Transaction", "C Scan B",
+#     "from/to SAV") ปนกับชื่อร้าน → _gsb_desc_map() แปลง label ที่อ่านง่าย
+#     แล้วดึงชื่อร้านจริงที่เหลือออกมาต่อท้ายด้วย _gsb_extra() เพื่อให้
+#     categorize() ยังจับแบรนด์ได้ (เช่น "C Scan B <ร้านกาแฟ>" → food)
+#   - รายการเงินเข้า (SAV Deposit / Interest / Transfer+Deposit) เก็บ label
+#     เปล่าๆ พอ เพราะ flag เงินเข้าจะ route ไป "income" อยู่แล้ว
+# ============================================================
 
+# _GSB_LINE: g1-g3 = วัน/เดือน/ปี(พ.ศ. 4 หลัก) · g4 = รายละเอียด · g5 = จำนวน
+# · g6 = ยอดคงเหลือ · แล้วท้ายแถวมีเลขอ้างอิง 2 ชุด (\d+ \d+ — ไม่ได้ capture).
+# (.+?) ที่ g4 = "ขี้เกียจ" (non-greedy) จับให้สั้นสุดพอเจอตัวเลขจำนวนถัดไป
+# กันมันกินเลขจำนวนเข้าไปในรายละเอียด.
+# ตัวอย่าง: "01/02/2567 C Scan B ร้านตัวอย่าง 50.00 1,000.00 123 456"
 _GSB_LINE = re.compile(
     r"^(\d{2})/(\d{2})/(\d{4})\s+(.+?)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+\d+\s+\d+"
 )
@@ -454,6 +597,10 @@ def _gsb_extra(desc: str, label_keywords: list[str]) -> str:
 
     Conservative: we only strip known noise; we never invent text.
     """
+    # สเต็ป: (1) ลบ marker ช่องทาง (MyMo/Transaction) (2) ลบ "from/to SAV"
+    # (บัญชีภายใน ไม่ใช่ชื่อร้าน) (3) ลบโค้ดในวงเล็บสั้นๆ เช่น "(QR)" (4) ลบคำ
+    # label ที่ใส่ไปในป้ายแล้ว (กันซ้ำ) (5) ยุบช่องว่าง/ตัวคั่น — ถ้าเหลือแต่
+    # ตัวเลข/ว่าง คืน "" (ไม่มีข้อมูลชื่อร้านที่ใช้จัดหมวดได้).
     out = _GSB_MARKERS.sub(" ", desc)
     # Drop GSB-style SAV account hints — they're internal account tags, not
     # merchant names, so they pollute categorize() input.
@@ -478,6 +625,9 @@ def _gsb_desc_map(desc: str) -> str:
     Income labels (SAV Deposit / Interest / Transfer+Deposit) stay as plain
     labels because the incoming flag routes them to "income" anyway.
     """
+    # รับ: บรรทัด desc ดิบ · คืน: label ไทยอ่านง่าย (+ ชื่อร้านต่อท้ายถ้าดึงได้).
+    # ลำดับ: เช็ครายการเงินเข้าก่อน (คืน label เปล่า เพราะ flag income จัดหมวดเอง)
+    # → แล้วไล่ elif เลือก label ตามคำที่เจอ → ดึงชื่อร้านที่เหลือด้วย _gsb_extra().
     # Income paths — keep plain label (incoming flag handles categorization).
     if re.search(r"SAV Deposit", desc, re.I):
         return "รับโอนเงิน"
@@ -529,12 +679,14 @@ def parse_gsb(raw: str) -> list[dict]:
         if not m:
             continue
         try:
+            # GSB พิมพ์ปีเป็น พ.ศ. → แปลงเป็น ค.ศ. ด้วย -543 (เช่น 2567 → 2024).
             year = int(m.group(3)) - 543
             amount = float(m.group(5).replace(",", ""))
         except ValueError:
             continue
         if amount == 0:
             continue
+        # จัดรูปวันที่เป็น ISO "YYYY-MM-DD"; zfill(2) เติม 0 นำหน้าให้ครบ 2 หลัก.
         date = f"{year}-{m.group(2).zfill(2)}-{m.group(1).zfill(2)}"
         is_deposit = bool(_GSB_DEPOSIT.search(m.group(4)))
         merchant = _gsb_desc_map(m.group(4))
@@ -549,8 +701,25 @@ def parse_gsb(raw: str) -> list[dict]:
     return txs
 
 
-# ─── KTB parser ─────────────────────────────────────────────────────────────
+# ============================================================
+# KTB parser (กรุงไทย)
+# ------------------------------------------------------------
+# รูปแบบแถว KTB: <วันที่ DD/MM/YY (พ.ศ. 2 หลัก)> <รายละเอียด> <จำนวน>
+# <ยอดคงเหลือ> <รหัส 3-4 หลัก>. จุดต่าง:
+#   - ปีเป็น พ.ศ. 2 หลัก → year = 1957 + YY (เช่น 67 → 2024)
+#   - รายละเอียดฝัง "marker code" ภายในของ KTB เช่น CGSWP (ชำระ QR),
+#     MORWSW (โอนออกพร้อมเพย์), NMIDSD (รับโอนพร้อมเพย์) ฯลฯ — พวกนี้
+#     ไม่ใช่ชื่อร้านที่คนอ่านออก. _ktb_merchant() ใช้ code เหล่านี้ (คู่กับ
+#     คำไทย) เลือก label ที่อ่านง่าย แล้ว _ktb_extra() ลบ code + โค้ดใน
+#     วงเล็บออก เหลือชื่อร้านจริงให้ categorize() จับ
+#   - มี fallback label อังกฤษ (เผื่อ statement อังกฤษในอนาคต) เรียงจาก
+#     เฉพาะเจาะจง → ทั่วไป; "Transfer" เดี่ยวๆ ถือเป็นเงินออกเพื่อความ
+#     ปลอดภัย (ให้ _KTB_DEPOSIT เป็นตัวพลิกทิศเฉพาะ "Transfer In/Deposit")
+# ============================================================
 
+# _KTB_LINE: g1-g3 = วัน/เดือน/ปี(พ.ศ. 2 หลัก) · g4 = รายละเอียด · g5 = จำนวน
+# · g6 = ยอดคงเหลือ (มี "-" นำหน้าได้) · g7 = รหัส 3-4 หลักท้ายแถว (ประจำ KTB).
+# ตัวอย่าง: "01/02/67 CGSWP ชำระ QR ร้านตัวอย่าง 50.00 1,000.00 123"
 _KTB_LINE = re.compile(
     r"^(\d{2})/(\d{2})/(\d{2})\s+(.+)\s+([\d,]+\.\d{2})\s+(-?[\d,]+\.\d{2})\s+(\d{3,4})\s*$"
 )
@@ -587,6 +756,9 @@ def _ktb_extra(desc: str, label_keywords: list[str]) -> str:
 
     Conservative: we only strip known noise; we never invent text.
     """
+    # สเต็ป: (1) ลบ marker code ภายในของ KTB (CGSWP/MORWSW/... — รหัสระบบ ไม่ใช่
+    # ชื่อร้าน) (2) ลบโค้ดในวงเล็บสั้นๆ เช่น "(NMIDSD)" (3) ลบคำ label ที่ใส่ไป
+    # ในป้ายแล้ว (4) ยุบช่องว่าง/ตัดตัวคั่นท้าย — ถ้าเหลือแต่ตัวเลข/ว่าง คืน "".
     out = _KTB_MARKERS.sub(" ", desc)
     # Drop short codes wrapped in parens like "(NMIDSD)" or "(KTB)" — they
     # don't help categorize and pollute the merchant string.
@@ -607,6 +779,10 @@ def _ktb_merchant(desc: str) -> str:
     additional merchant/payee info found in the raw text so categorize() can
     still pick up brand names (e.g. "ชำระ QR Code STARBUCKS" → food).
     """
+    # รับ: บรรทัด desc ดิบ · คืน: label ไทย (+ ชื่อร้านถ้าดึงได้). ไล่ elif จาก
+    # marker code + คำไทยที่เฉพาะเจาะจงก่อน แล้วค่อย fallback ป้ายอังกฤษ (เผื่อ
+    # statement อังกฤษในอนาคต). ไม่เข้าเงื่อนไขใด → คืนคำแรกของ desc (พฤติกรรม
+    # เดิม กัน fixture เทสต์เปลี่ยน).
     label: str | None = None
     label_keywords: list[str] = []
 
@@ -687,6 +863,8 @@ def parse_ktb(raw: str) -> list[dict]:
         if not m:
             continue
         try:
+            # KTB ใช้ พ.ศ. 2 หลัก → บวก 1957 ได้ ค.ศ. เต็ม (เช่น 67 → 2024;
+            # 1957 = 2500 - 543).
             year = 1957 + int(m.group(3))
             amount = float(m.group(5).replace(",", ""))
         except ValueError:
@@ -707,7 +885,23 @@ def parse_ktb(raw: str) -> list[dict]:
     return txs
 
 
-# ─── SCB parser ─────────────────────────────────────────────────────────────
+# ============================================================
+# SCB parser (ไทยพาณิชย์)
+# ------------------------------------------------------------
+# รูปแบบซับซ้อนสุด — 2 ชนิดแถว: _SCB_TX (เดบิต/เครดิตทั่วไป มี code X1/X2)
+# และ _SCB_IN (รายการเงินเข้า code IN). จุดต่าง:
+#   - บาง statement (OpenPDF/JasperReports) เขียนคำอธิบายไทย "ติด" กับยอด
+#     คงเหลือโดยไม่มีช่องว่าง เช่น "...944.99จ่ายบิล..." → tail regex จึง
+#     ตั้งแบบยอมรับกว้าง (.*)$ ไม่ใช่ \s*$ (แบบเข้มเดิม reject ~60% แถว)
+#   - คำอธิบายอาจอยู่ "ในบรรทัดเดียวกัน" (inline หลังยอด) หรือ "บรรทัดก่อน
+#     หน้า" (layout เก่า) → ใช้ inline ก่อน ไม่มีค่อย fallback ไป
+#     _scb_prev_desc()
+#   - _scb_merchant() มี ~6 รูปแบบเรียงลำดับ (สำคัญ! บางอันใช้ token
+#     ร่วมกัน): (a) PAY <ref> <ร้าน> POS · (b) เติมเงิน WIDx#### <ช่องทาง>
+#     · (f) "<ธนาคาร> (<CODE>) /X####" อ้างอิงข้ามธนาคาร ต้องมาก่อน (c)/(d)
+#     เพราะใช้ชื่อธนาคารร่วมกัน · (e) จ่ายบิล <ผู้รับ> · (d) รับโอนจาก
+#     <BANK> · (c) โอนไป <BANK> — แล้วตามด้วย fallback อังกฤษ + legacy
+# ============================================================
 
 # Note: trailing group is permissive ((.*)$ instead of \s*$) because some SCB
 # statements (especially OpenPDF/JasperReports outputs) glue the Thai
@@ -715,9 +909,15 @@ def parse_ktb(raw: str) -> list[dict]:
 # "...944.99จ่ายบิล...". The original strict tail rejected 60% of rows on
 # such files. The captured tail is treated as inline description in
 # parse_scb() and falls back to the previous-line heuristic when empty.
+# _SCB_TX (แถวเดบิต/เครดิตทั่วไป): g1-g3 = วัน/เดือน/ปี · g4 = code (X1 = เงินเข้า,
+# X2 = เงินออก) · g5 = เลขอ้างอิง · g6 = จำนวน · g7 = ยอดคงเหลือ · g8 = รายละเอียด
+# inline (อาจว่าง — ดู note ด้านบนเรื่อง tail แบบ (.*)$ ที่ยอมรับกว้าง).
+# ตัวอย่าง: "01/02/24 13:45 X2 REF123 100.00 5,000.00 PAY 999 ร้านตัวอย่าง"
 _SCB_TX = re.compile(
     r"^(\d{2})/(\d{2})/(\d{2})\s+\d{2}:\d{2}\s+(X1|X2)\s+(\S+)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})(.*)$"
 )
+# _SCB_IN (แถวเงินเข้า code "IN"): โครงเหมือน _SCB_TX แต่ไม่มี field X1/X2
+# → g4 = เลขอ้างอิง · g5 = จำนวน · g6 = ยอดคงเหลือ · g7 = รายละเอียด inline.
 _SCB_IN = re.compile(
     r"^(\d{2})/(\d{2})/(\d{2})\s+\d{2}:\d{2}\s+IN\s+(\S+)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})(.*)$"
 )
@@ -751,6 +951,10 @@ def _scb_extra(desc: str, label_keywords: list[str]) -> str:
     Conservative: we only strip known noise; we never invent text. If only
     noise is left we return "" so the caller keeps the safe label.
     """
+    # สเต็ป: (1) ลบรหัสธนาคาร/ช่องทาง (KBANK/พร้อมเพย์/...) (2) ลบเลขบัญชีปิดบัง
+    # ทั้ง "X9999", "x9999" (พิมพ์เล็ก) และ "/X9999" (3) ลบ ref ยาว ≥10 หลัก
+    # (ไม่ใช่ชื่อร้านแน่ๆ) (4) ลบโค้ดในวงเล็บสั้นๆ (5) ลบคำ label (6) ยุบช่องว่าง
+    # — เหลือแต่ตัวเลข/ว่าง → คืน "" ให้ผู้เรียกใช้ label ปลอดภัยแทน.
     out = _SCB_MARKERS.sub(" ", desc)
     # Drop SCB-style masked account hints — both "X9999" (uppercase) and
     # "x9999" (lowercase, e.g. "KBANK xNNNN"), plus "/X9999" form.
@@ -788,6 +992,10 @@ def _scb_merchant(desc: str) -> str:
         return "ธุรกรรม"
     d = re.sub(r"\s+", " ", desc).strip()
 
+    # ไล่เช็ค desc ทีละรูปแบบ (a)-(f) เรียงตามความเฉพาะเจาะจง — รูปที่ใช้ token
+    # ร่วมกัน (เช่นชื่อธนาคาร) ต้องมาก่อนเสมอ. คืน label ไทย + ชื่อร้าน/ผู้รับที่
+    # ดึงได้. หมายเหตุ: ตัวอย่างในคอมเมนต์ใช้ placeholder generic (เลขบัญชี
+    # ปิดบัง = "X9999", ชื่อธนาคาร/ร้าน = ตัวอย่าง) — ไม่ใช่ข้อมูลจริง.
     # (a) PAY <ref> <merchant> — debit-card POS. Keep merchant name only.
     if re.match(r"^PAY\s+", d, re.I):
         m = re.match(r"^PAY\s+\d+\s*(.*)$", d, re.I)
@@ -806,6 +1014,8 @@ def _scb_merchant(desc: str) -> str:
 
     # (f) "<ธนาคารไทย> (<CODE>) /X####" — inter-bank ref only, no person.
     # MUST come before (c)/(d) because it shares bank-name tokens.
+    # ไทย: อ้างอิงโอนข้ามธนาคารที่มีแต่เลขบัญชี ไม่มีชื่อคน เช่น
+    #      "<ธนาคาร> (KBNK) /X9999" → คืน "รับโอน (<ธนาคาร>)".
     m = re.match(
         r"^(" + "|".join(_SCB_BANK_NAMES) + r"|ธ\.?ก\.?ส\.?)\s*"
         r"\(([A-Z]{2,6})\)\s*/X\d+\s*$",
@@ -889,6 +1099,9 @@ def _scb_merchant(desc: str) -> str:
 
 
 def _scb_prev_desc(lines: list[str], i: int) -> str:
+    # รับ: list บรรทัดทั้งหมด + index แถวปัจจุบัน · คืน: บรรทัด "ก่อนหน้า" เป็น
+    # desc (SCB layout เก่าวางชื่อร้านไว้บรรทัดบนของแถวธุรกรรม). ถ้าไม่มีบรรทัด
+    # ก่อนหน้า หรือบรรทัดนั้นเป็น noise/แถวธุรกรรมอื่น → คืน "" (ไม่ใช่ desc).
     if i <= 0:
         return ""
     p = lines[i - 1]
@@ -907,6 +1120,7 @@ def parse_scb(raw: str) -> list[dict]:
         im = _SCB_IN.match(line)
         if im:
             try:
+                # SCB ใช้ปี ค.ศ. 2 หลัก → บวก 2000 (เช่น 24 → 2024).
                 yr = 2000 + int(im.group(3))
                 amt = float(im.group(5).replace(",", ""))
             except ValueError:
@@ -954,7 +1168,14 @@ def parse_scb(raw: str) -> list[dict]:
     return txs
 
 
-# ─── Public API ─────────────────────────────────────────────────────────────
+# ============================================================
+# Public API (จุดเข้าเดียวที่ภายนอกเรียกใช้)
+# ------------------------------------------------------------
+# parse_statement() = entry point ที่ backend (/api/parse-pdf) + LINE PDF
+# handler เรียก: ดึงข้อความ → detect_bank() → เลือก parser ให้ตรงเจ้า.
+# ถ้า detect ไม่ออก ("unknown") จะ fallback ลองทุก parser ตามลำดับ แล้ว
+# คืนอันแรกที่ได้ผล — กัน statement รูปแบบเพี้ยนที่ header จับไม่ติด.
+# ============================================================
 
 def parse_statement(
     file_bytes: bytes,

@@ -1,7 +1,27 @@
 /* ============================================================
-   MoneyMind — Dark Luxe Aesthetic
-   Pure black canvas, editorial serif display, warm champagne accent
+   MoneyMind — Luxe Aesthetic
+   Dual-theme: Cream Luxe (light, default) + Dark Luxe (toggle)
+   Editorial serif display, warm gold accent (#D4B978)
    ============================================================ */
+
+/* ------------------------------------------------------------
+   สารบัญ (Table of Contents) — ค้นด้วยชื่อโซนได้เลย
+   1.  Design Tokens        :root (light) / [data-theme="dark"]
+   2.  Base + App Shell      html/body, background layers, .app grid
+   3.  Sidebar               .sidebar (desktop; → bottom-nav ที่ ≤1024px)
+   4.  Main / Topbar         .main, .topbar, .greeting, .icon-btn
+   5.  Popovers              notifications dropdown / filter popover
+   6.  Modal + Cat-picker    .modal, .field, .cat-picker
+   7.  Auth                  login/register split layout
+   8.  Buttons + Cards       .btn, .card
+   9.  Dashboard             hero balance, KPI, charts, categories
+   10. Transactions          toolbar, tx rows
+   11. Upload / Insights     dropzone, preview, score card
+   12. Chat Panel            "คุยกับ Mind" (slide bottom sheet บนมือถือ)
+   13. Budgets page
+   14. Responsive            ≤1024 / ≤767 / ≤640 / ≤480 breakpoints
+   15. Settings page         tabs, QR, danger zone, delete modal, theme-picker
+   ------------------------------------------------------------ */
 
 @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Manrope:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&display=swap');
 
@@ -12,7 +32,11 @@
      Dark theme = [data-theme="dark"] override block below
      ============================================================ */
 
-  /* Base palette */
+  /* Base palette — สีพื้นหลัง + พื้นผิว (surface = การ์ด/กล่องที่ลอยเหนือพื้น)
+     CSS variable (custom property): ตัวแปรที่เก็บค่าไว้ตรงกลาง เรียกใช้ด้วย var(--ชื่อ)
+     แก้ที่นี่จุดเดียว = เปลี่ยนทั้งแอป (นี่คือหัวใจว่าทำไม "ห้าม hardcode สี")
+     --surface-hover/-strong = เฉดเข้มขึ้นตอน hover หรืออยากเน้น | --border = เส้นขอบบาง
+     (ใช้ rgba โปร่งแสง เพื่อให้กลืนกับพื้นได้ทุกเฉดสี) */
   --bg: #F5EFE3;
   --bg-2: #FAF5E8;
   --bg-deep: #EFE7D5;
@@ -23,7 +47,9 @@
   --border: rgba(20, 20, 26, 0.08);
   --border-strong: rgba(20, 20, 26, 0.15);
 
-  /* Type */
+  /* Type — ลำดับความเข้มของตัวอักษร ไล่จากเข้มสุด → จางสุด
+     --text(หัวข้อ) · --ink-muted · --ink-subtle · --ink-faint(ป้ายเล็กจางสุด)
+     ยิ่งจาง = ยิ่งเป็นข้อความรอง ช่วยคุมลำดับสายตา (visual hierarchy) */
   --text: #14141A;
   --ink: var(--text);
   --ink-muted: #2A2A32;
@@ -45,7 +71,9 @@
   --negative-soft: rgba(196, 69, 69, 0.10);
   --warn: #B8842F;
 
-  /* Elevated surfaces (notif / popover / modal) — paper-white on cream */
+  /* Semantic tokens — แยกเป็นตัวแปรเพื่อให้ dark theme override ที่จุดเดียว
+     (เลิก hardcode rgba(0,0,0,...) ที่ทำให้ light theme เงาหนักเกิน — Lesson #9).
+     Elevated surfaces (notif / popover / modal) — paper-white on cream */
   --surface-elev: #FFFFFF;
   --overlay-scrim: rgba(20, 20, 26, 0.35);
   --shadow-elev: 0 18px 50px rgba(20, 20, 26, 0.12),
@@ -57,11 +85,16 @@
   --accent-warning: var(--warn);
   --accent-warning-soft: rgba(184, 132, 47, 0.14);
 
+  /* Radius — ความมนของมุม (border-radius) ไล่ระดับ sm→xl
+     ใช้ token ร่วมกันทั้งแอปให้มุมมนสม่ำเสมอ ไม่มั่วเป็นเลขต่างกันทุกที่ */
   --radius-sm: 10px;
   --radius: 18px;
   --radius-lg: 24px;
   --radius-xl: 32px;
 
+  /* Font stack — จัดกลุ่มฟอนต์: --sans(เนื้อหา) · --serif(หัวข้อหรูสไตล์นิตยสาร) ·
+     --mono(โค้ด/เวลา) · --num(ตัวเลข Inter อ่านง่าย)
+     เบราว์เซอร์ใช้ฟอนต์ตัวแรกในลิสต์ที่เครื่องมี ไล่ไปตัวถัดไปถ้าไม่เจอ */
   --sans: 'Manrope', 'IBM Plex Sans Thai', system-ui, sans-serif;
   --serif: 'Instrument Serif', 'IBM Plex Sans Thai', Georgia, serif;
   --mono: 'JetBrains Mono', ui-monospace, monospace;
@@ -110,11 +143,18 @@
   --accent-warning-soft: rgba(229, 192, 123, 0.12);
 }
 
-/* Smooth theme transitions (skip on prefers-reduced-motion — handled below) */
+/* ============================================================
+   2. Base + App Shell
+   ============================================================ */
+
+/* สลับธีมนุ่มนวล 220ms ทุก surface (ข้ามเมื่อ prefers-reduced-motion — ดูท้ายไฟล์)
+   หมายเหตุ: ระหว่าง transition getComputedStyle จะคืน "ค่ากลางทาง" — ปกติ ไม่ใช่บั๊ก */
 html, body {
   transition: background-color 220ms ease, color 220ms ease;
 }
 
+/* box-sizing:border-box = ให้ padding + border รวมอยู่ในความกว้างที่กำหนด
+   (กล่องไม่บวมล้นออกนอกขนาดที่ตั้งไว้) | selector * = บังคับใช้กับทุก element */
 * { box-sizing: border-box; }
 
 html, body {
@@ -130,6 +170,10 @@ html, body {
   overflow-x: hidden;
 }
 
+/* body::before / body::after = เลเยอร์ตกแต่งพื้นหลัง (แสง gradient อุ่นๆ + จุด noise)
+   pseudo-element = element เสมือนที่ CSS สร้างให้ (ไม่มีใน HTML จริง)
+   position:fixed + inset:0 = คลุมเต็มจอ | z-index:0 = อยู่ใต้เนื้อหา
+   pointer-events:none = คลิกทะลุผ่านได้ ไม่บังปุ่มด้านบน */
 body::before {
   content: '';
   position: fixed;
@@ -154,6 +198,8 @@ body::after {
 }
 
 /* ---------- App shell ---------- */
+/* .app = โครงหลักของทั้งหน้า ใช้ CSS Grid แบ่ง 2 คอลัมน์: sidebar 240px + เนื้อหา(1fr)
+   grid = ระบบจัดวางแบบตาราง (แถว×คอลัมน์) | 1fr = กินพื้นที่ที่เหลือ 1 ส่วน (fraction) */
 .app {
   position: relative;
   z-index: 1;
@@ -165,7 +211,13 @@ body::after {
   min-height: 100vh;
 }
 
-/* ---------- Sidebar ---------- */
+/* ============================================================
+   3. Sidebar
+   กฎสำคัญ: ที่ ≤1024px sidebar กลายเป็น bottom-nav แนวนอน
+   (ดู override ในบล็อก Responsive @media max-width:1024px) — ห้ามทำพัง
+   ============================================================ */
+/* position:sticky + top:0 = ตรึงแถบไว้ติดขอบบนเวลาเลื่อนหน้า (ไม่หลุดหายขึ้นไป)
+   flex = จัดของในแนวเดียว | flex-direction:column = เรียงโลโก้/เมนู/ผู้ใช้ จากบนลงล่างแนวตั้ง */
 .sidebar {
   position: sticky;
   top: 0;
@@ -230,6 +282,9 @@ body::after {
   padding: 14px 12px 6px;
 }
 
+/* .nav-item = ปุ่มเมนูแต่ละอันในแถบข้าง | .active = เมนูที่กำลังเปิดอยู่ (พื้นเน้น + แถบทอง)
+   transition:all 200ms = ค่อยๆ เปลี่ยนสี/พื้นตอน hover ภายใน 200 มิลลิวินาที (นุ่มนวลไม่กระตุก)
+   ::before ของ .active = ขีดแถบทองเล็กๆ ด้านซ้ายบอกว่ากำลังอยู่หน้านี้ */
 .nav-item {
   display: flex;
   align-items: center;
@@ -317,6 +372,9 @@ body::after {
 .user-meta { font-size: 10.5px; color: var(--ink-subtle); letter-spacing: 0.3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 110px; }
 .sidebar-footer > div:not(.avatar) { min-width: 0; overflow: hidden; }
 
+/* ============================================================
+   4. Main / Topbar
+   ============================================================ */
 /* ---------- Main ---------- */
 .main {
   padding: 36px 56px 80px;
@@ -328,6 +386,8 @@ body::after {
   min-width: 0;
 }
 
+/* .topbar = แถบบนสุดของเนื้อหา (คำทักทาย + ปุ่มเครื่องมือ)
+   justify-content:space-between = ดันของสองกลุ่มไปสุดคนละฝั่งซ้าย-ขวา เว้นช่องว่างตรงกลาง */
 .topbar {
   display: flex;
   align-items: center;
@@ -393,11 +453,17 @@ body::after {
   box-shadow: 0 0 8px var(--accent-glow);
 }
 
+/* ============================================================
+   5. Popovers — notifications dropdown / filter popover
+   ============================================================ */
 /* ---------- Notifications dropdown ---------- */
 .notif-anchor {
   position: relative;
 }
 
+/* .notif-dropdown = กล่องแจ้งเตือนที่เด้งลงมาใต้ปุ่มกระดิ่ง
+   position:absolute = วางตำแหน่งอิงจาก .notif-anchor ที่ครอบอยู่ (ตัวตั้ง position:relative)
+   z-index:90 = ชั้นความสูง ยิ่งเลขมากยิ่งอยู่ด้านหน้า ให้ลอยทับเนื้อหาปกติ */
 .notif-dropdown {
   position: absolute;
   top: calc(100% + 10px);
@@ -640,13 +706,21 @@ body::after {
   font-family: var(--mono);
 }
 
+/* ============================================================
+   6. Modal + Cat-picker
+   ⚠️ z-index:200 ต้องเหนือ bottom-nav (.sidebar z:100). ห้ามใส่ animation
+   ที่มี opacity ให้ ancestor (.page-enter) — จะเกิด stacking context ขัง
+   overlay ไว้ใน scope ทำให้ bottom-nav ทับปุ่มบนมือถือ (Lesson #14)
+   ============================================================ */
 /* ---------- Modal ---------- */
+/* .modal-overlay = ฉากมืดเบลอคลุมทั้งจอตอนเปิดหน้าต่าง modal
+   position:fixed + inset:0 = ยึดเต็มจอ ไม่เลื่อนตามเนื้อหา | backdrop-filter:blur = เบลอฉากหลัง */
 .modal-overlay {
   position: fixed;
   inset: 0;
   background: var(--overlay-scrim);
   backdrop-filter: blur(8px);
-  z-index: 200;
+  z-index: 200;   /* เหนือ bottom-nav — ดูหมายเหตุ stacking context ด้านบน */
   display: flex;
   align-items: center;
   justify-content: center;
@@ -700,6 +774,7 @@ body::after {
   gap: 18px;
 }
 
+/* .field = 1 ช่องกรอกในฟอร์ม (ป้ายกำกับ + ช่อง input เรียงลงล่างด้วย flex-direction:column) */
 .field {
   display: flex;
   flex-direction: column;
@@ -745,6 +820,10 @@ body::after {
   align-items: stretch;
 }
 
+/* Cat-picker — grid เลือกหมวด (4 คอลัมน์บน desktop).
+   min-width:0 บน grid + item ปลดล็อก default min-width:auto ของ grid item
+   คู่กับ overflow-wrap:anywhere ที่ .cat-pick กันข้อความไทยยาว
+   ("ของใช้ในบ้าน") ดันคอลัมน์ล้นจอ/ถูก clip บนมือถือ ≤480px (Lesson #15) */
 .cat-picker {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -792,8 +871,11 @@ body::after {
 }
 
 /* ============================================================
-   Auth — Login / Register split layout
+   7. Auth — Login / Register split layout
    ============================================================ */
+/* .auth-shell = หน้า login/สมัครสมาชิก แบ่ง 2 ฝั่งด้วย grid:
+   ฝั่งซ้าย = ภาพโปรโมท (hero) | ฝั่งขวา = ฟอร์มกรอก
+   ≤980px จะซ่อน hero เหลือฟอร์มคอลัมน์เดียว (ดู media query ใต้บล็อกนี้) */
 .auth-shell {
   position: relative;
   z-index: 1;
@@ -1116,6 +1198,11 @@ body::after {
 .logout-item svg { opacity: 0.6; }
 .logout-item:hover svg { opacity: 1; color: var(--negative); }
 
+/* ============================================================
+   8. Buttons + Cards
+   ============================================================ */
+/* .btn = ปุ่มพื้นฐาน | .btn-primary(ทึบเข้ม) .btn-accent(ทอง) = ระดับความสำคัญของปุ่ม
+   inline-flex = จัดไอคอน + ข้อความในปุ่มให้อยู่บรรทัดเดียว จัดกึ่งกลางแนวตั้ง */
 .btn {
   display: inline-flex;
   align-items: center;
@@ -1208,7 +1295,12 @@ body::after {
 
 .card-title .more:hover { color: var(--ink); }
 
+/* ============================================================
+   9. Dashboard — hero balance, KPI, charts, category breakdown
+   ============================================================ */
 /* ---------- Hero balance ---------- */
+/* .hero = แถวบนสุดของแดชบอร์ด: ยอดเงินตัวใหญ่ (ซ้าย 1.4 ส่วน) + การ์ด AI (ขวา 1 ส่วน)
+   1.4fr 1fr = ซ้ายกว้างกว่าขวา ~1.4 เท่า */
 .hero {
   display: grid;
   grid-template-columns: 1.4fr 1fr;
@@ -1368,6 +1460,8 @@ body::after {
 .ai-meta { font-size: 11.5px; color: var(--ink-subtle); }
 
 /* ---------- KPI grid ---------- */
+/* .kpi-grid = การ์ดตัวเลขสรุป 4 ใบเรียงแถวเดียว | repeat(4,1fr) = สร้าง 4 คอลัมน์กว้างเท่ากัน
+   (จอเล็กจะยุบเหลือ 2 หรือ 1 คอลัมน์ ดูใน Responsive) */
 .kpi-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -1520,6 +1614,9 @@ body::after {
   transition: width 1s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
+/* ============================================================
+   10. Transactions — toolbar + tx rows
+   ============================================================ */
 /* ---------- Transactions ---------- */
 /* IMPORTANT: tx-toolbar items must fit in single row on mobile.
    Search uses flex: 1 1 0 + min-width: 0, buttons use flex-shrink: 0.
@@ -1616,6 +1713,8 @@ body::after {
   color: var(--ink-subtle);
 }
 
+/* .tx-row = 1 แถวรายการเงิน | grid 4 คอลัมน์: ไอคอน36px / ชื่อร้าน(1fr ยืดเต็ม) / จำนวน / ลูกศร
+   auto = กว้างเท่าเนื้อหาพอดี · 1fr = กินพื้นที่ที่เหลือ (ชื่อร้านยาวจึงให้ยืด) */
 .tx-row {
   display: grid;
   grid-template-columns: 36px 1fr auto auto;
@@ -1695,12 +1794,17 @@ body::after {
 
 .tx-row:hover .tx-arrow { opacity: 1; }
 
+/* ============================================================
+   11. Upload / Insights — dropzone, preview table, score card
+   ============================================================ */
 /* ---------- Upload ---------- */
 .upload-page {
   max-width: 880px;
   margin: 20px auto 0;
 }
 
+/* .dropzone = กล่องเส้นประสำหรับลากไฟล์ PDF มาวาง (drag & drop)
+   .dragging = สถานะตอนกำลังลากไฟล์เข้ามาเหนือกล่อง → เปลี่ยนขอบ+พื้นเป็นสีทองเน้นให้รู้ว่าปล่อยได้ */
 .dropzone {
   border: 1.5px dashed var(--border-strong);
   border-radius: var(--radius-xl);
@@ -2038,6 +2142,11 @@ body::after {
   min-height: 1.4em;
 }
 
+/* ============================================================
+   12. Chat Panel — "คุยกับ Mind"
+   Desktop: slide-in จากขวา (width 480). Mobile: slide-up bottom sheet.
+   ใช้ transform (ไม่ใช่ top/left) เพื่อ animation ลื่น 60fps
+   ============================================================ */
 /* ---------- Chat panel ---------- */
 .chat-overlay {
   position: fixed;
@@ -2052,6 +2161,9 @@ body::after {
 
 .chat-overlay.open { opacity: 1; pointer-events: auto; }
 
+/* .chat-panel = แผงแชท "คุยกับ Mind" เลื่อนเข้าจากขวา (บนมือถือเลื่อนขึ้นจากล่าง)
+   transform:translateX(100%) = ซ่อนพ้นขอบจอ, .open → translateX(0) เลื่อนเข้ามา
+   ใช้ transform (ไม่ใช่ right/left) เพราะเบราว์เซอร์เร่งด้วย GPU → ลื่น 60fps ไม่กระตุก */
 .chat-panel {
   position: fixed;
   top: 0;
@@ -2288,7 +2400,7 @@ body::after {
 
 
 /* ============================================================
-   Budgets page — per-category monthly limits
+   13. Budgets page — per-category monthly limits
    ============================================================ */
 
 .budget-summary {
@@ -2369,6 +2481,8 @@ body::after {
   gap: 12px;
 }
 
+/* .budget-row = 1 แถวงบประมาณต่อหมวด | .warn(ใช้ใกล้เต็ม) .over(ใช้เกินงบ) = เปลี่ยนสีขอบ+แถบเตือน
+   color-mix() = คำสั่งผสม 2 สีตามเปอร์เซ็นต์ (เช่น negative 40% + border) ให้เฉดเตือนกลมกลืน */
 .budget-row {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -2582,7 +2696,7 @@ body::after {
 
 
 /* ============================================================
-   RESPONSIVE — Mobile, Tablet, Desktop overrides
+   14. RESPONSIVE — Mobile, Tablet, Desktop overrides
    Targets actual class names: .app, .sidebar, .brand, .main, .nav-item
    Breakpoints:
      Desktop  : 1025px+    (notebook, PC)  — original layout
@@ -2596,6 +2710,8 @@ html, body {
   -webkit-text-size-adjust: 100%;
 }
 
+/* media query = กฎ CSS ที่ทำงานเฉพาะเมื่อจอตรงเงื่อนไข (เช่น กว้าง ≤1024px)
+   หัวใจของ responsive: จอเล็กลง → จัด layout ใหม่ | !important = บังคับทับกฎ desktop ด้านบน */
 /* ─── TABLET + MOBILE (≤ 1024px) ─────────────────────────────── */
 @media (max-width: 1024px) {
 
@@ -2614,7 +2730,9 @@ html, body {
     grid-template-rows: 1fr auto;
   }
 
-  /* Sidebar → horizontal bottom nav */
+  /* Sidebar → horizontal bottom nav
+     ★ กฎเด็ดขาด: จอ ≤1024px ต้องย้าย sidebar จากแนวตั้งด้านซ้าย → แถบแนวนอนล่างจอ
+     position:fixed + bottom:0 = ตรึงติดล่างจอ | flex-direction:row = เรียงเมนูเป็นแนวนอน */
   .sidebar {
     position: fixed !important;
     bottom: 0 !important;
@@ -2806,6 +2924,8 @@ html, body {
   }
 }
 
+/* ช่วง ≤767px (มือถือ): KPI เหลือ 1 คอลัมน์ · ตารางรายการแปลงร่างเป็นการ์ดแนวตั้ง ·
+   dropdown แจ้งเตือนกางเต็มความกว้างจอแทนกล่องลอย */
 /* ─── MOBILE ONLY (≤ 767px) ──────────────────────────────────── */
 @media (max-width: 767px) {
   /* KPI to single column on small phones */
@@ -2855,6 +2975,8 @@ html, body {
   }
 }
 
+/* ช่วง ≤480px (มือถือจอเล็กมาก เช่น iPhone SE): บีบ padding แคบลง · เมนูล่างเหลือเกือบแค่ไอคอน ·
+   ตั้ง input เป็น 16px กัน iOS ซูมหน้าจอเองตอนแตะช่องกรอก (a11y + กันเลย์เอาต์เพี้ยน) */
 /* ─── TINY PHONES (≤ 480px) ──────────────────────────────────── */
 @media (max-width: 480px) {
   .main { padding-left: 14px !important; padding-right: 14px !important; }
@@ -3041,6 +3163,8 @@ html, body {
     overflow-y: auto !important;
     -webkit-overflow-scrolling: touch;
     flex: 1 1 auto;
+    /* จองพื้นที่ scrollbar ไว้เสมอ — กัน content เด้ง/ถูก clip ตอน scrollbar
+       โผล่ตอนเนื้อหาล้น (คู่กับ cat-picker fix — Lesson #15) */
     scrollbar-gutter: stable;
   }
   .modal-body .field { gap: 4px !important; }
@@ -3311,13 +3435,15 @@ html, body {
 }
 
 /* ============================================================
-   Sprint 5 — Settings Page
+   15. Settings Page (Sprint 5)
    Layout : sidebar (240px) + content
    Tabs   : Profile / Appearance / LINE / Notifications
    Extras : QR card, Danger Zone, Delete modal (3-step),
             Cancel-delete banner, iOS-style toggle switch
    ============================================================ */
 
+/* .settings-view = หน้าตั้งค่า grid 2 คอลัมน์: แถบแท็บ(240px) + เนื้อหา(1fr)
+   ≤1024px แท็บจะย้ายไปเรียงแนวนอนด้านบนแทน (ดู Settings Responsive ท้ายไฟล์) */
 .settings-view {
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr);
@@ -3423,7 +3549,9 @@ html, body {
   .settings-back-btn svg { width: 18px; height: 18px; }
 }
 
-/* Theme picker (light/dark toggle in Settings → Appearance) */
+/* ─── Theme picker (light/dark toggle ใน Settings → การแสดงผล) ───
+   สไตล์ทั้งหมดอยู่ที่ .theme-picker / .theme-option (ไม่ใช้ inline style
+   ที่ .active border 2px หัก padding 1px ให้ขนาดปุ่มคงเดิม — Lesson #10) */
 .theme-picker {
   display: flex;
   gap: 12px;
@@ -4053,6 +4181,8 @@ html, body {
 }
 
 /* ─── Toggle Switch (iOS-style) ─── */
+/* .toggle-switch = สวิตช์เปิด/ปิดสไตล์ iOS | ซ่อน checkbox จริง(opacity:0) แล้ววาด slider+knob เอง
+   input:checked + .slider = ตอนติ๊ก → เลื่อนปุ่มกลม(knob)ไปขวา + เปลี่ยนพื้นเป็นสี accent */
 .toggle-switch {
   position: relative;
   display: inline-block;
@@ -4329,6 +4459,8 @@ html, body {
 }
 
 /* ─── ACCESSIBILITY: respect prefers-reduced-motion ──────────── */
+/* prefers-reduced-motion = ผู้ใช้ตั้งค่าระบบว่า "ลดการเคลื่อนไหว" (เพื่อคนที่เวียนหัวง่าย)
+   → เราปิด animation/transition เกือบทั้งหมด เหลือ 0.01ms (การเข้าถึงที่ดี a11y) */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;

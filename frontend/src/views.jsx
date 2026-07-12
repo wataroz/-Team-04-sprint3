@@ -25,6 +25,8 @@ async function aiComplete(prompt) {
 
 // ─────────────────────────────────────────────────────────────
 // Derived data — keeps every view in sync with the live tx list
+// [TH] กลุ่มฟังก์ชันคำนวณค่าจาก txs สด ๆ (trend/deltas/insight cards)
+// ทุก view เรียกใช้ร่วมกันเพื่อให้ตัวเลขตรงกันเสมอ ไม่มี state ซ้ำซ้อน
 // ─────────────────────────────────────────────────────────────
 
 // Latest tx date in the list, or "today" if empty. Returns Date.
@@ -299,12 +301,18 @@ function deriveInsightCards(txs, lang) {
 
 // ─────────────────────────────────────────────────────────────
 // Dashboard
+// [TH] หน้าภาพรวม (view แรกหลัง login) — โชว์ยอดคงเหลือ + การ์ด AI teaser + KPI 4 ตัว
+// (รายรับ/รายจ่าย/ใช้งบ/เก็บออม) + กราฟแนวโน้ม + สัดส่วนตามหมวด (donut) + ธุรกรรมล่าสุด
+// ทุกตัวเลข derive จาก txs สด ๆ ด้วย useMemo (จำผลไว้จนกว่า txs จะเปลี่ยน จึงไม่คำนวณซ้ำทุก render)
+// ถ้ายังไม่มีธุรกรรม จะแสดง empty state ชวนไปนำเข้า statement
 // ─────────────────────────────────────────────────────────────
 function Dashboard({ state, setView, openChat }) {
   const { txs, currency, lang, budget } = state;
   const [range, setRange] = useState('30D'); // 30D | 90D | 1Y
 
   // Calculations
+  // [TH] รวมรายรับ/รายจ่าย + แยกยอดรายจ่ายตามหมวด (byCat) จาก txs — ห่อด้วย useMemo
+  // เพื่อคำนวณใหม่เฉพาะตอน txs เปลี่ยน (dependency array คือ [txs] ท้าย useMemo)
   const totals = useMemo(() => {
     let income = 0,expense = 0;
     const byCat = {};
@@ -578,6 +586,9 @@ function Dashboard({ state, setView, openChat }) {
 
 // ─────────────────────────────────────────────────────────────
 // Transactions
+// [TH] หน้ารายการธุรกรรมทั้งหมด — ค้นหา (search) + กรองตามหมวด/ประเภท + จัดเรียง (sort)
+// + จัดกลุ่มตามวันที่ + เพิ่มรายการเอง (AddTxModal) + แก้หมวด (EditCategoryModal = Learning
+// Loop) — ตัวแปร filtered/groups ห่อด้วย useMemo คำนวณใหม่เมื่อ txs หรือเงื่อนไขกรองเปลี่ยน
 // ─────────────────────────────────────────────────────────────
 function Transactions({ state, addTxs, editCategory }) {
   const { txs, currency, lang } = state;
@@ -605,6 +616,8 @@ function Transactions({ state, addTxs, editCategory }) {
     };
   }, [filterOpen]);
 
+  // [TH] กรอง txs ตาม หมวด/ประเภท/คำค้น แล้วจัดเรียงตาม sortBy → คืนอาเรย์ใหม่ (ไม่แตะ txs เดิม)
+  // คำนวณใหม่เมื่อ dependency ใน [] ท้าย useMemo ตัวใดตัวหนึ่งเปลี่ยน
   const filtered = useMemo(() => {
     let r = txs.filter((tx) => {
       if (filterCat && tx.category !== filterCat) return false;
@@ -836,6 +849,9 @@ function EditableTxRow({ tx, currency, lang, canEdit, onEdit }) {
 // EditCategoryModal — Day 5 Learning Loop
 // Lets the user pick a new category for one transaction, with an opt-in
 // "remember for this merchant" checkbox (default ON).
+// [TH] หัวใจของ Learning Loop ฝั่ง UI — user แก้หมวดของ tx + ติ๊ก "จำตัวเลือกนี้"
+// (default ON) แล้ว backend จะ upsert MerchantOverride → ครั้งหน้าเจอร้านเดิม
+// จัดหมวดให้อัตโนมัติ (checkbox ถูกซ่อนเมื่อ tx.category === 'income')
 // ─────────────────────────────────────────────────────────────
 function EditCategoryModal({ lang, tx, onClose, onSave }) {
   const currentCat = CATEGORIES[tx.category] || CATEGORIES.other;
@@ -971,6 +987,9 @@ function EditCategoryModal({ lang, tx, onClose, onSave }) {
 
 // ─────────────────────────────────────────────────────────────
 // FilterPopover
+// [TH] ป๊อปอัปตัวกรองของหน้า Transactions — เลือกประเภท (ทั้งหมด/รายรับ/รายจ่าย) + วิธีจัดเรียง
+// state จริงถูกยกไปเก็บที่ Transactions (component นี้แค่รับ value + setter ผ่าน props แล้ว
+// เรียกกลับ) — เทคนิคนี้เรียก "lifting state up" ให้พ่อถือ state ลูกหลายตัวใช้ร่วมกันได้
 // ─────────────────────────────────────────────────────────────
 function FilterPopover({ lang, filterType, setFilterType, sortBy, setSortBy, onClear, onClose, activeCount }) {
   const sortOptions = [
@@ -1019,6 +1038,9 @@ function FilterPopover({ lang, filterType, setFilterType, sortBy, setSortBy, onC
 
 // ─────────────────────────────────────────────────────────────
 // AddTxModal
+// [TH] โมดัลเพิ่มธุรกรรมด้วยมือ — เลือกประเภท (รายจ่าย/รายรับ) + วันที่ + จำนวน + ร้าน + หมวด
+// + หมายเหตุ ทุกช่องเป็น controlled input (ค่าอยู่ใน state) กดบันทึกได้เมื่อ canSave = true
+// (มีชื่อร้าน + จำนวน > 0) แล้วเรียก onSave(tx) ส่ง object ธุรกรรมกลับให้ Transactions
 // ─────────────────────────────────────────────────────────────
 function AddTxModal({ lang, onSave, onClose }) {
   const today = new Date().toISOString().slice(0, 10);
@@ -1251,6 +1273,9 @@ function autoCategory(merchant) {
   return 'other';
 }
 
+// [TH] หน้านำเข้า Statement — flow 4 stage: idle → parsing → review → done
+// รองรับ CSV (parse ฝั่ง browser) + PDF (ส่งให้ backend /api/parse-pdf ผ่าน pdfplumber)
+// รหัส PDF เก็บใน React state เท่านั้น ห้าม persist ลง storage (ความปลอดภัย)
 function Upload({ state, addTxs, setPendingImport, lastImport, deleteLastImport }) {
   const { lang, currency } = state;
   const [stage, setStage] = useState('idle'); // idle | parsing | review | done
@@ -1734,6 +1759,10 @@ function Upload({ state, addTxs, setPendingImport, lastImport, deleteLastImport 
 
 // ─────────────────────────────────────────────────────────────
 // AI Insights
+// [TH] หน้าวิเคราะห์ด้วย AI — โชว์คะแนนสุขภาพการเงิน (ScoreRing) + การ์ด insight
+//   ลำดับความสำคัญของข้อมูลที่แสดง: ผล AI จริง (aiResult) > derive จาก txs > empty state
+//   กดปุ่ม "วิเคราะห์ด้วย AI" → runAnalysis() ยิง /api/ai/complete แล้ว parse JSON ที่ได้กลับ
+//   หมายเหตุ: ปุ่มนี้เงียบบน production ถ้า backend ไม่มี AI key (จับ error แล้ว setAiResult(null))
 // ─────────────────────────────────────────────────────────────
 function Insights({ state, openChat, setView, aiResult, setAiResult, analyzing, setAnalyzing }) {
   const { lang, currency } = state;
@@ -1767,6 +1796,9 @@ function Insights({ state, openChat, setView, aiResult, setAiResult, analyzing, 
     return () => clearInterval(iv);
   }, [analyzing]);
 
+  // [TH] กดปุ่มวิเคราะห์ → สร้าง prompt (สั่งให้ AI ตอบเป็น JSON เท่านั้น) + แนบสรุปการเงิน
+  // จาก buildSummaryForAI → เรียก aiComplete() → ดึงก้อน JSON ด้วย regex แล้ว JSON.parse
+  // ถ้าสำเร็จ setAiResult(...), ถ้าพัง setAiResult(null) (ตกไปแสดง derived/empty แทน)
   const runAnalysis = async () => {
     setAnalyzing(true);
     setAiResult(null);
@@ -1919,6 +1951,8 @@ Provide 4-6 items, varied across warn/good/info.\n\nData:\n${summary}\n\nReply w
 
 }
 
+// [TH] ประกอบข้อความสรุปการเงิน (รายรับ/จ่าย/คงเหลือ/งบ/รายจ่ายรายหมวด/จำนวนธุรกรรม)
+// เป็น string เพื่อแนบเข้า prompt ให้ AI อ่านเป็น context — ใช้ทั้งหน้า Insights และ ChatPanel
 function buildSummaryForAI(state) {
   const { txs, budget, lang } = state;
   let income = 0,expense = 0;
@@ -1941,6 +1975,9 @@ ${cats}
 
 // ─────────────────────────────────────────────────────────────
 // Chat Panel (slide-in)
+// [TH] แชท "คุยกับ Mind" — เรียก AI ผ่าน aiComplete() (backend /api/ai/complete)
+// ไม่ใช่ window.claude.complete() เดิมที่มีเฉพาะบน Claude.ai artifact (undefined
+// บน production) มือถือเปิดเป็น bottom sheet เลื่อนขึ้น
 // ─────────────────────────────────────────────────────────────
 function ChatPanel({ state, open, onClose }) {
   const { lang } = state;
@@ -1958,6 +1995,9 @@ function ChatPanel({ state, open, onClose }) {
     if (bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
   }, [messages, sending]);
 
+  // [TH] ส่งข้อความในแชท — ต่อ history + สรุปการเงิน (buildSummaryForAI) เป็น prompt แล้วเรียก
+  // aiComplete() (POST /api/ai/complete) รอคำตอบมาต่อท้าย messages · ถ้า error โชว์ข้อความ
+  // ขออภัยแทน (บน production ที่ backend ไม่มี AI key ปุ่มนี้จะตอบ fallback นี้)
   const send = async (textArg) => {
     const text = (textArg ?? input).trim();
     if (!text || sending) return;
@@ -2036,6 +2076,9 @@ Object.assign(window, { Dashboard, Transactions, Upload, Insights, Budgets, Chat
 
 // ─────────────────────────────────────────────────────────────
 // Budgets — per-category monthly spending limits
+// [TH] หน้าตั้งงบรายหมวดต่อเดือน — เทียบยอดใช้จริงของเดือนล่าสุด (monthlySpend) กับงบที่ตั้งไว้
+// โชว์แถบ progress + สถานะ (ปกติ/ใกล้ครบ/เกินงบ) เรียงหมวดที่ใช้เปอร์เซ็นต์เยอะไว้บนสุด
+// แก้งบผ่าน BudgetRow → updateCatBudget (ค่าถูกเซฟอัตโนมัติผ่าน effect ใน app.jsx)
 // ─────────────────────────────────────────────────────────────
 function Budgets({ state, updateCatBudget, resetCatBudgets }) {
   const { txs, currency, lang, catBudgets } = state;
@@ -2172,6 +2215,9 @@ function Budgets({ state, updateCatBudget, resetCatBudgets }) {
   );
 }
 
+// [TH] หนึ่งแถวงบต่อหมวด — โชว์ไอคอน/ชื่อ/ยอดใช้ + ช่องกรอกงบ + แถบ progress + ปุ่มลัดตั้งงบ
+// draft = state ภายในของช่องกรอก ให้พิมพ์ได้อิสระ แล้วค่อย commit (parse + onChange) ตอน blur
+// หรือกด Enter — กันไม่ให้ React clamp/แก้ค่าทุกครั้งที่เคาะแป้น (พิมพ์ลื่นกว่า)
 function BudgetRow({ cat, catObj, limit, spent, pct, status, remaining, currency, lang, onChange }) {
   // Local input state so users can type freely without React clamping on every keystroke
   const [draft, setDraft] = useState(String(limit));
@@ -2316,6 +2362,8 @@ const SETTINGS_ACCENT_OPTIONS = [
   '#E5A55C', // Warm amber
 ];
 
+// [TH] หน้า Settings — โครง 4 แท็บ (โปรไฟล์/การแสดงผล/LINE/การแจ้งเตือน) เลือกด้วย state activeTab
+// บนมือถือ (≤1024px) กดแท็บแล้ว scrollIntoView เลื่อน content เข้าจอ (Lesson #5 — กันความรู้สึก "กดไม่ติด")
 function SettingsView({ user, lang, tw, setTweak, onPatchUser, onOpenDeleteModal, onSetUser, onBack, onLogout }) {
   const [activeTab, setActiveTab] = useState('profile');
   const contentRef = useRef(null);
@@ -2418,6 +2466,9 @@ function SettingsView({ user, lang, tw, setTweak, onPatchUser, onOpenDeleteModal
 // Local state mirror so the user can type without Save being blocked by
 // pristine state. We diff against the props on Save so re-clicking is a
 // no-op for unchanged fields (backend ignores 400-on-empty by skipping).
+// [TH] แท็บโปรไฟล์ — แก้ชื่อจริง (name) + ชื่อที่แสดง (display_name), email อ่านอย่างเดียว
+// name/displayName เป็น mirror ของค่าจาก props ให้พิมพ์ได้อิสระ · dirty = มีการแก้จริงไหม (คุมปุ่ม Save)
+// handleSave ยิงเฉพาะ field ที่เปลี่ยนผ่าน onPatchUser (PATCH /api/users/<id>) · ล่างสุดมี Danger Zone → ลบบัญชี
 function SettingsProfileSection({ user, lang, onPatchUser, onOpenDeleteModal, onLogout }) {
   const [name, setName] = useState(user.name || '');
   const [displayName, setDisplayName] = useState(user.display_name || '');
@@ -2590,6 +2641,8 @@ function SettingsProfileSection({ user, lang, onPatchUser, onOpenDeleteModal, on
 // ── Appearance section ───────────────────────────────────────
 // Hooks straight into the tweaks state from app.jsx — every change is
 // live-saved by the existing useEffect there (no extra fetch needed).
+// [TH] แท็บการแสดงผล — ธีมสว่าง/มืด + สี accent + ความหนาแน่น + แสงพื้นหลัง + ภาษา + สกุลเงิน
+// ทุกปุ่มเรียก setTweak(key, value) ตรง ๆ → effect ใน app.jsx เซฟลง backend ให้อัตโนมัติ (ไม่ต้อง fetch เอง)
 function SettingsAppearanceSection({ lang, tw, setTweak }) {
   const currentTheme = tw.theme === 'dark' ? 'dark' : 'light';
   return (
@@ -2787,6 +2840,11 @@ function SettingsLineSection({ user, lang }) {
   }, [user && user.id]);
 
   // LINE OAuth flow (Sprint 6) — primary linking path.
+  // [TH] ช่องทางเชื่อม LINE หลัก (แทนคำสั่ง `เชื่อม <email>` เดิม):
+  //   1) ขอ authorize URL จาก backend (state token ฝังมาจาก server)
+  //   2) navigate ออกไปหน้า LINE Login ให้ user กดอนุญาต
+  //   3) backend รับ callback แล้ว redirect กลับ `/?line_linked=1` (หรือ error)
+  //      ซึ่ง useEffect ใน app.jsx จะ pick up ตอน mount
   // 1) Ask backend for the authorize URL (state token baked in server-side)
   // 2) Hard navigate so the user goes through LINE Login
   // 3) Backend handles the callback and redirects to `/?line_linked=1`
@@ -3009,6 +3067,9 @@ function SettingsLineSection({ user, lang }) {
 // Reads + writes to /api/preferences/<id> with camelCase keys.
 // Live-saves on toggle (no Save button) — debounced is overkill for a
 // 2-flag form, just fire the PUT directly.
+// [TH] แท็บการแจ้งเตือน — 2 สวิตช์: เตือนงบ + เตือนผ่าน LINE (สวิตช์ LINE ปิดถ้ายังไม่ลิงก์บัญชี)
+// โหลดค่าเริ่มต้นจาก /api/preferences + /api/line/status พร้อมกัน (Promise.all) ตอน mount
+// สลับสวิตช์ = เซฟทันที (persist ยิง PUT /api/preferences) ไม่มีปุ่ม Save
 function SettingsNotificationsSection({ user, lang }) {
   const [budgetAlert, setBudgetAlert] = useState(true);
   const [lineNotify, setLineNotify] = useState(true);

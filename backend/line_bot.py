@@ -86,7 +86,14 @@ def _blob_api() -> MessagingApiBlob:
 # ─── Helpers ───────────────────────────────────────────────────────────────
 
 def _reply(reply_token: str, text, user_id: str | None = None) -> None:
-    """Reply with one text message, or a list of texts (up to 5).
+    """ตอบกลับ LINE 1 ข้อความ (หรือ list ได้สูงสุด 5) — มี fallback เป็น push.
+
+    ปัญหาที่แก้: บน Render Free แอปอาจ cold-start 30-60 วิ กว่าโค้ดจะรัน
+    reply_token (ใช้ได้ครั้งเดียว + อายุไม่กี่วินาที) หมดอายุไปแล้ว → reply พัง.
+    เลยดักไว้: ถ้า reply_message ล้ม ให้ push_message แทน (ใช้แค่ user_id
+    ไม่ต้องพึ่ง token). ต้องส่ง user_id มาด้วย fallback ถึงจะทำงาน.
+
+    Reply with one text message, or a list of texts (up to 5).
 
     On Render Free tier the container may cold-start (30-60s) before this
     code runs, by which point the LINE reply token has already expired
@@ -190,14 +197,23 @@ def _full_intro(display_name: str = "") -> list[str]:
 
 
 def _get_or_create_user(line_user_id: str, display_name: str) -> User:
-    """Return MoneyMind User linked to this LINE userId, creating if needed."""
+    """หา MoneyMind User ที่ผูกกับ LINE id นี้ — ยังไม่มีก็สร้าง "auto-user" ให้.
+
+    ถ้ายังไม่ผูกกับบัญชีเว็บ เราสร้าง user ชั่วคราวด้วย email ปลอม
+    "line_<id>@line.local" ไว้เก็บข้อมูลไปก่อน. พอ user เชื่อมบัญชีจริงทีหลัง
+    (_link_line_to_user) ข้อมูลจะถูกย้ายไปบัญชีเว็บแล้วลบ auto-user นี้ทิ้ง.
+
+    Return MoneyMind User linked to this LINE userId, creating if needed."""
     db = SessionLocal()
     try:
         lu = db.query(LineUser).filter_by(line_user_id=line_user_id).first()
         if lu:
+            # เคยผูกแล้ว → คืน user ที่ผูกอยู่ (ไม่สร้างใหม่)
             return db.query(User).filter_by(id=lu.user_id).first()
 
         # Create a new MoneyMind user linked to this LINE account
+        # email ลงท้าย @line.local = สัญญาณว่าเป็น auto-user (ใช้เป็น safety guard
+        # ตอน re-link ว่าอันไหนลบทิ้งได้ อันไหนเป็นบัญชีเว็บจริงห้ามแตะ)
         fake_email = f"line_{line_user_id}@line.local"
         user = db.query(User).filter_by(email=fake_email).first()
         if user is None:
@@ -320,6 +336,9 @@ def _link_line_to_user(
 
     moved_tx = 0
     if is_auto_user:
+        # เคสนี้: LINE เคยผูกกับ auto-user ชั่วคราว (@line.local) → ย้ายข้อมูล
+        # ทั้งหมด (tx/import/noti) ไปบัญชีเว็บจริง แล้วลบ auto-user ทิ้ง.
+        # ลำดับสำคัญเพื่อ FK safety: ย้าย/ลบลูกให้เสร็จก่อนค่อย db.delete(old_user).
         # Throwaway LINE auto-account → migrate its data onto the web user,
         # then delete the orphan. Order matters for FK safety.
         moved_tx = db.query(Transaction).filter_by(user_id=old_user_id).update(
@@ -528,6 +547,7 @@ def _format_thb(amount: float) -> str:
 # ─── Command handlers ──────────────────────────────────────────────────────
 
 def _cmd_summary(user_id: int) -> str:
+    """คำสั่ง "สรุป" — สรุปยอดรับ/จ่าย/คงเหลือ + จำนวนรายการของเดือนปัจจุบัน."""
     txs = _month_transactions(user_id)
     if not txs:
         return "ยังไม่มีรายการในเดือนนี้ครับ\nอัปโหลด statement PDF มาได้เลย 📄"
@@ -550,10 +570,12 @@ def _cmd_summary(user_id: int) -> str:
 
 
 def _cmd_balance(user_id: int) -> str:
+    """คำสั่ง "ยอด" — ปัจจุบัน alias ของ "สรุป" (แสดงผลชุดเดียวกัน)."""
     return _cmd_summary(user_id)
 
 
 def _cmd_categories(user_id: int) -> str:
+    """คำสั่ง "เดือนนี้" — แยกรายจ่ายเดือนนี้ตามหมวด + สัดส่วน % เรียงมากไปน้อย."""
     txs = [t for t in _month_transactions(user_id) if t.amount < 0]
     if not txs:
         return "ยังไม่มีรายจ่ายในเดือนนี้ครับ 🎉"
@@ -577,6 +599,7 @@ def _cmd_categories(user_id: int) -> str:
 
 
 def _cmd_analyze(user_id: int) -> str:
+    """คำสั่ง "วิเคราะห์" — Top 3 หมวดที่ใช้มากสุด + คำแนะนำประหยัดตามหมวดอันดับ 1."""
     txs = [t for t in _month_transactions(user_id) if t.amount < 0]
     if not txs:
         return "ยังไม่มีข้อมูลเพียงพอสำหรับการวิเคราะห์ครับ"
@@ -613,6 +636,7 @@ def _cmd_analyze(user_id: int) -> str:
 
 
 def _cmd_help() -> str:
+    """คำสั่ง "ช่วย" — รายการคำสั่งทั้งหมดแบบสั้น (เวอร์ชันยาวคือ _cmd_tutorial)."""
     return (
         "🤖 MoneyMind Bot — คำสั่งที่ใช้ได้:\n\n"
         "📊 สรุป — สรุปรายรับ/รายจ่ายเดือนนี้\n"
@@ -845,7 +869,11 @@ def _ingest_parsed_pdf(
     txs: list,
     filename: str = "line_upload.pdf",
 ) -> None:
-    """Persist already-parsed transactions and reply with the import summary.
+    """บันทึกรายการที่แกะแล้วลง DB (สร้าง Import → apply overrides → dedup →
+    insert → สร้าง notification → push budget alert → ส่งสรุปกลับ). ใช้ร่วมกัน
+    ทั้งเส้นทางอัปโหลดปกติ และเส้นทาง "ปลดรหัสสำเร็จแล้วค่อย ingest".
+
+    Persist already-parsed transactions and reply with the import summary.
 
     Extracted from ``_handle_pdf`` so both the normal upload path and the
     "unlocked after password retry" path can share the exact same dedup +
@@ -865,6 +893,9 @@ def _ingest_parsed_pdf(
         )
         return
 
+    # lazy import กัน circular import: app.py import line_bot (สำหรับ webhook)
+    # อยู่แล้ว → ถ้า line_bot ไป import app ตั้งแต่หัวไฟล์จะวนกันจน startup พัง.
+    # ย้ายมา import ตอนใช้จริงตรงนี้แทน (ตอนนั้น app โหลดเสร็จแล้ว).
     # Lazy import to avoid the circular: app.py imports line_bot for the
     # webhook route, so importing app at module load would break startup.
     from backend.app import _apply_overrides, _dedup_build_rows
@@ -961,7 +992,10 @@ def _ingest_parsed_pdf(
 
 def _handle_pdf(reply_token: str, message_id: str, user: User,
                 line_user_id: str | None = None) -> None:
-    """Download and parse a PDF that arrived via LINE.
+    """ดาวน์โหลดไฟล์ PDF จาก LINE → แกะรายการ. ถ้าไฟล์ติดรหัสจะเก็บบัฟเฟอร์ไว้
+    (LinePendingPdf) แล้วขอรหัสในข้อความถัดไป.
+
+    Download and parse a PDF that arrived via LINE.
 
     IMPORTANT — reply_token usage:
       The caller (``on_file``) has ALREADY used ``reply_token`` to send the
@@ -1069,7 +1103,9 @@ def _handle_pdf(reply_token: str, message_id: str, user: User,
 
 @handler.add(FollowEvent)
 def on_follow(event: FollowEvent):
-    """User adds the bot as a friend."""
+    """ผู้ใช้กด "เพิ่มเพื่อน" บอท → สร้างบัญชี + ส่งข้อความแนะนำการใช้งาน (2 bubble).
+
+    User adds the bot as a friend."""
     line_user_id = event.source.user_id
     # On follow we DO want the real display name (only chance to capture it
     # for new accounts), so the profile lookup here is justified.
@@ -1082,6 +1118,11 @@ def on_follow(event: FollowEvent):
 
 @handler.add(MessageEvent, message=TextMessageContent)
 def on_text(event: MessageEvent):
+    """จัดการข้อความ text จากผู้ใช้ — ลำดับสำคัญ: (1) รหัส PDF ที่ค้างรออยู่ →
+    (2) คำสั่งเชื่อมบัญชี "เชื่อม <email>" → (3) คำสั่งปกติ (สรุป/ยอด/...) →
+    (4) ไม่เข้าเงื่อนไขไหน = ส่งข้อความแนะนำ. ต้องเช็ค pending-PDF ก่อนสุด
+    เพราะรหัสผ่านอาจบังเอิญหน้าตาเหมือน email หรือคำสั่ง.
+    """
     line_user_id = event.source.user_id
     raw_text = event.message.text.strip()
     text = raw_text.lower()
@@ -1123,6 +1164,7 @@ def on_text(event: MessageEvent):
         ("วิธีใช้", "เริ่ม", "เริ่มต้น", "tutorial", "guide", "start", "เริ่มใช้งาน"): lambda: _cmd_tutorial(),
     }
 
+    # จับคู่ข้อความกับคำสั่ง: ถ้า text ตรงคำใดคำหนึ่งใน keywords → เรียกฟังก์ชันนั้น
     for keywords, fn in COMMANDS.items():
         if text in keywords:
             _reply(event.reply_token, fn(), user_id=line_user_id)
@@ -1138,7 +1180,13 @@ def on_text(event: MessageEvent):
 
 @handler.add(MessageEvent, message=FileMessageContent)
 def on_file(event: MessageEvent):
-    """User sends a file — try to parse as PDF bank statement.
+    """ผู้ใช้ส่งไฟล์ → ถ้าเป็น .pdf ลองแกะเป็น statement (ไม่ใช่ PDF ก็บอกให้ส่ง PDF).
+
+    กติกา reply_token: ใช้ token ตอบ "ได้รับไฟล์แล้ว กำลังประมวลผล" ครั้งเดียว
+    เท่านั้น (token ใช้ได้ครั้งเดียว) จากนั้นทุกข้อความที่เหลือส่งผ่าน _push แทน
+    → กัน bug "บอทขอ PDF ซ้ำ" ที่เกิดตอน token หมดอายุระหว่าง cold-start.
+
+    User sends a file — try to parse as PDF bank statement.
 
     Flow contract (Sprint 4 fix):
       1. Reply token is consumed exactly once with the "received, processing"

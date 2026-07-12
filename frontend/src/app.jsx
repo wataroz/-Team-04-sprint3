@@ -18,6 +18,8 @@ const DEFAULT_CATEGORY_BUDGETS = {
   other: 2000,
 };
 
+// [TH] อ่านงบรายหมวดจาก localStorage (mm_cat_budgets = key เดียวที่กฎอนุญาตให้เก็บฝั่ง client)
+// ถ้าไม่มีหรือ parse พังก็คืนค่า default — ครอบ try/catch กัน JSON.parse throw จนหน้าเว็บล่ม
 function loadCategoryBudgets() {
   try {
     const raw = localStorage.getItem('mm_cat_budgets');
@@ -29,6 +31,8 @@ function loadCategoryBudgets() {
   }
 }
 
+// [TH] ค่าเริ่มต้นของการตั้งค่าหน้าตา (สี accent / ภาษา / สกุลเงิน / ความหนาแน่น / ธีม)
+// useTweaks() เอาค่านี้เป็นค่าตั้งต้น แล้ว override ด้วย preferences จาก backend ตอน login
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "accent": "#D4B978",
   "lang": "th",
@@ -46,7 +50,11 @@ const ACCENT_OPTIONS = [
 '#E5A55C' // Warm amber
 ];
 
+// [TH] คอมโพเนนต์หลักของทั้งแอป — ถือ global state เกือบทั้งหมด (user, txs, view, notifs, ...)
+// แล้วส่งลงไปให้แต่ละ view ผ่าน props + ทำหน้าที่ router (เลือกว่าจะแสดง view ไหนตาม state `view`)
+// ถ้า user === null → แสดงหน้า auth (Login/Register/Forgot), ไม่งั้น → sidebar + main + chat
 function App() {
+  // tw = ค่าการตั้งค่าหน้าตา (จาก useTweaks hook), setTweak = ตัวแก้ทีละ key เช่น setTweak('lang','en')
   const [tw, setTweak] = useTweaks(TWEAK_DEFAULTS);
 
   // ─── Auth state ───
@@ -78,6 +86,11 @@ function App() {
   const notifRef = useRef(null);
 
   // ─── LINE OAuth callback handler (Sprint 6) ───
+  // [TH] จัดการผลลัพธ์หลัง user กลับจากหน้า LINE OAuth:
+  //   - สำเร็จ  → backend redirect มาที่ `/?line_linked=1`
+  //   - ล้มเหลว → `/?line_error=<code>` (map เป็น toast ภาษาผู้ใช้)
+  // ทำงานครั้งเดียวตอน mount แล้วล้าง query string ทิ้ง (history.replaceState)
+  // เพื่อกัน refresh/back ยิง toast ซ้ำ
   // Backend redirects to `/?line_linked=1` (success) or `/?line_error=<code>`
   // (failure) after the OAuth round-trip. Runs once on mount — surfaces a toast,
   // routes the user to Settings, and scrubs the query string so a refresh
@@ -118,6 +131,9 @@ function App() {
   }, []);
 
   // ─── Load persisted data from backend when the user logs in ───
+  // [TH] พอ login เสร็จ (user.id เปลี่ยน) โหลด txs + notifications + preferences
+  // จาก backend มา hydrate state ทั้งหมด — auth เก็บใน React state ล้วน (refresh =
+  // logout) จึงต้องดึงใหม่ทุกครั้งที่เข้าระบบ
   useEffect(() => {
     if (!user || !user.id) return;
     fetch('/api/transactions?user_id=' + user.id)
@@ -147,6 +163,9 @@ function App() {
   }, [user && user.id]);
 
   // Persist category budgets (localStorage as offline fallback + backend if logged in)
+  // [TH] ทุกครั้งที่ catBudgets เปลี่ยน → เซฟลง localStorage ทันที (ใช้ตอน offline/ยังไม่ login)
+  // + ถ้า login แล้วยิง PUT /api/preferences ไป backend แบบ debounce 400ms
+  // (debounce = รอให้ user หยุดพิมพ์ก่อนค่อยยิง — setTimeout + clearTimeout ใน cleanup กันยิงถี่)
   useEffect(() => {
     try { localStorage.setItem('mm_cat_budgets', JSON.stringify(catBudgets)); } catch (e) {}
     if (!user || !user.id) return;
@@ -162,6 +181,8 @@ function App() {
   }, [catBudgets, user && user.id]);
 
   // Persist tweaks (accent/density/lang/currency/showAmbient/theme) to backend, debounced.
+  // [TH] บันทึกการตั้งค่าลง backend แบบ debounce 400ms — รอให้ user หยุดปรับก่อน
+  // ค่อยยิง PUT ทีเดียว (กันยิง request ถี่ตอนลากสไลเดอร์/สลับตัวเลือกรัว ๆ)
   useEffect(() => {
     if (!user || !user.id) return;
     const t = setTimeout(() => {
@@ -182,12 +203,16 @@ function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tw.accent, tw.density, tw.lang, tw.currency, tw.showAmbient, tw.theme, user && user.id]);
 
+  // [TH] แก้งบของหมวดเดียว (clamp ไม่ให้ติดลบ + ปัดเป็นจำนวนเต็ม) — ใช้ functional setState
+  // รูปแบบ (prev => ...) เพื่ออ่านค่า state ล่าสุดเสมอ กันปัญหา stale state ตอนอัปเดตถี่ ๆ
   const updateCatBudget = (cat, val) => {
     setCatBudgets((prev) => ({ ...prev, [cat]: Math.max(0, Math.round(val)) }));
   };
   const resetCatBudgets = () => setCatBudgets({ ...DEFAULT_CATEGORY_BUDGETS });
 
   // Close notif dropdown on outside click / escape
+  // [TH] เมื่อ dropdown แจ้งเตือนเปิดอยู่ → ฟังคลิกนอกกล่อง (mousedown) + ปุ่ม Escape เพื่อปิด
+  // return ในท้าย effect = cleanup ถอด event listener ทุกครั้ง กัน memory leak / ฟังซ้ำซ้อน
   useEffect(() => {
     if (!notifOpen) return;
     const onClick = (e) => {
@@ -207,6 +232,9 @@ function App() {
   const budget = 25000;
 
   // ─── Auth handlers ───
+  // [TH] handleLogin: login สำเร็จ → เก็บ user ลง state (= เข้าสู่ระบบ) + เด้งไปหน้า overview
+  // handleLogout: ล้าง user เป็น null (= ออกจากระบบ) + เคลียร์ state ที่ผูกกับ user ทั้งหมด
+  // (auth อยู่ใน React state ล้วน ไม่เก็บ localStorage → refresh หน้า = logout อัตโนมัติ)
   const handleLogin = (u) => {
     setUser(u);
     setView('overview');
@@ -223,6 +251,8 @@ function App() {
   };
 
   // ─── Update CSS vars when accent changes ───
+  // [TH] เขียนสี accent ลง CSS variable (--accent) ที่ <html> โดยตรงทุกครั้งที่เปลี่ยนสี
+  // + คำนวณเฉดอ่อน/เรืองแสงด้วย hexToRgba → CSS ทั้งชีตที่อ้าง var(--accent) เปลี่ยนสีตามทันที
   useEffect(() => {
     const root = document.documentElement;
     const accent = tw.accent || '#D4B978';
@@ -258,6 +288,9 @@ function App() {
   // Theme toggle (light/dark) — Sprint 5. Sets data-theme on <html> so BEST's
   // CSS dual-token sheet can override; also keeps the mobile address-bar
   // color in sync via <meta name="theme-color">. Default = light (cream luxe).
+  // [TH] สลับธีมโดย set attribute `data-theme` ที่ <html> (ไม่ใช่ body) ให้
+  // ชีต CSS dual-token ของ BEST override ได้ + sync สี address bar มือถือผ่าน
+  // <meta theme-color> ค่า default = light (cream luxe)
   useEffect(() => {
     const theme = tw.theme === 'dark' ? 'dark' : 'light';
     document.documentElement.setAttribute('data-theme', theme);
@@ -265,6 +298,12 @@ function App() {
     if (meta) meta.content = theme === 'dark' ? '#0a0a0b' : '#F5EFE3';
   }, [tw.theme]);
 
+  // [TH] เพิ่มธุรกรรมชุดใหม่ (จากหน้า Upload หรือปุ่ม Add entry) — ลำดับการทำงาน:
+  //   1) POST /api/imports บันทึกว่านำเข้าจากไฟล์ไหน (เฉพาะเมื่อมี pendingImport)
+  //   2) POST /api/transactions ให้ backend เซฟ + กันซ้ำ (คืน {created, skipped})
+  //   3) GET /api/transactions โหลดใหม่ทั้งชุด เพื่อให้ได้ id จริง + ลำดับ canonical
+  //   4-6) เคลียร์ผล AI เดิม (setAiResult null) + สร้าง notification + จำ import ล่าสุดไว้ให้กด Undo
+  // คืน {created, skipped, importId} ให้ผู้เรียกเอาไปโชว์ข้อความสรุป
   const addTxs = async (newTxs) => {
     if (!user || !user.id) {
       // Fallback: not logged in (shouldn't happen) — just keep in-memory.
@@ -574,6 +613,9 @@ function App() {
   const hour = new Date().getHours();
   const greetKey = hour < 12 ? 'greeting_morn' : hour < 17 ? 'greeting_noon' : 'greeting_eve';
 
+  // [TH] ทุกจุดที่แสดงชื่อผู้ใช้ใน UI ต้องใช้ pattern `user.display_name || user.name`
+  // (fallback) — Lesson #16: display_name เก็บลง DB ได้แต่เคยลืม render ทำให้ user
+  // กรอกแล้วไม่เห็นผล ใช้ pattern นี้ทั้ง 3 จุด (greeting / sidebar name / avatar)
   const viewTitles = {
     overview: lang === 'th' ? { crumb: 'ภาพรวม · พฤษภาคม 2026', heading: <>{t(I18N[greetKey], lang)} <em style={{ fontFamily: "\"Instrument Serif\"" }}>{user.display_name || user.name}</em></> } :
     { crumb: 'Overview · May 2026', heading: <>{t(I18N[greetKey], lang)} <em>{user.display_name || user.name}</em></> }
@@ -868,6 +910,8 @@ function App() {
 }
 
 // Convert #RRGGBB → rgba()
+// [TH] แปลงสี hex (#RRGGBB) เป็น rgba() เพื่อใส่ค่า alpha (ความโปร่งใส) —
+// ใช้ทำเฉดอ่อน (--accent-soft) และแสงเรือง (--accent-glow) ของสี accent
 function hexToRgba(hex, alpha) {
   const h = hex.replace('#', '');
   const r = parseInt(h.slice(0, 2), 16);
@@ -878,6 +922,9 @@ function hexToRgba(hex, alpha) {
 
 // ─────────────────────────────────────────────────────────────
 // NotifDropdown — opens from the bell button
+// [TH] กล่อง dropdown แจ้งเตือน (เปิดจากปุ่มกระดิ่งบน topbar) — แสดงรายการ notif
+//   props: notifs = อาเรย์แจ้งเตือน · onMarkAll = อ่านทั้งหมด · onClickItem(i) = อ่านทีละอัน
+//          onSeeAll = ไปหน้า Insights — นับ unread เพื่อโชว์ badge "N รายการใหม่"
 // ─────────────────────────────────────────────────────────────
 function NotifDropdown({ notifs, lang, onMarkAll, onClickItem, onSeeAll }) {
   const unreadCount = notifs.filter((n) => n.unread).length;

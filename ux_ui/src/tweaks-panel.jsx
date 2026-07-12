@@ -46,6 +46,11 @@
 //
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── Scoped panel CSS ─────────────────────────────────────────────────────────
+// สไตล์ทั้งหมดของ Tweaks panel อยู่ในสตริงนี้ (prefix .twk-*) แล้ว inject ผ่าน
+// <style> ตอน render — แยกจาก styles.css หลักเพื่อไม่ให้ชนกับธีมของแอป
+// หมายเหตุคนใหม่: z-index สูงมาก (2147483646 = เกือบสูงสุดของ 32-bit) เพื่อให้แผงลอยเหนือทุกอย่าง
+// | backdrop-filter:blur = เบลอสิ่งที่อยู่ใต้แผงให้เป็นกระจกฝ้า | position:fixed = ลอยมุมจอเสมอ
 const __TWEAKS_STYLE = `
   .twk-panel{position:fixed;right:16px;bottom:16px;z-index:2147483646;width:280px;
     max-height:calc(100vh - 32px);display:flex;flex-direction:column;
@@ -336,6 +341,7 @@ function TweakRow({ label, value, children, inline = false }) {
 
 // ── Controls ────────────────────────────────────────────────────────────────
 
+// TweakSlider — แถบเลื่อนปรับค่าตัวเลข (input type="range") พร้อมป้ายค่าปัจจุบัน + หน่วย
 function TweakSlider({ label, value, min = 0, max = 100, step = 1, unit = '', onChange }) {
   return (
     <TweakRow label={label} value={`${value}${unit}`}>
@@ -345,6 +351,7 @@ function TweakSlider({ label, value, min = 0, max = 100, step = 1, unit = '', on
   );
 }
 
+// TweakToggle — สวิตช์เปิด/ปิด | role="switch" + aria-checked = บอก screen reader ว่านี่คือสวิตช์
 function TweakToggle({ label, value, onChange }) {
   return (
     <div className="twk-row twk-row-h">
@@ -428,6 +435,7 @@ function TweakRadio({ label, value, options, onChange }) {
   );
 }
 
+// TweakSelect — ดรอปดาวน์ (<select>) มาตรฐาน ใช้เป็น fallback เมื่อ segment ยาวเกินจะจัดเป็นปุ่มไม่ไหว
 function TweakSelect({ label, value, options, onChange }) {
   return (
     <TweakRow label={label}>
@@ -451,6 +459,7 @@ function TweakText({ label, value, placeholder, onChange }) {
   );
 }
 
+// TweakNumber — ช่องกรอกตัวเลข + ลากที่ป้ายชื่อเพื่อปรับค่า (scrub) | clamp = บีบค่าให้อยู่ในช่วง min–max
 function TweakNumber({ label, value, min, max, step = 1, unit = '', onChange }) {
   const clamp = (n) => {
     if (min != null && n < min) return min;
@@ -561,6 +570,7 @@ function TweakButton({ label, onClick, secondary = false }) {
   );
 }
 
+// แปะ helper ทั้งหมดไว้บน window (global) — ให้ prototype/ไฟล์อื่นเรียกใช้ได้โดยไม่ต้อง import
 Object.assign(window, {
   useTweaks, TweaksPanel, TweakSection, TweakRow,
   TweakSlider, TweakToggle, TweakRadio, TweakSelect,

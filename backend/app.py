@@ -115,6 +115,8 @@ init_db()
 
 @app.route("/")
 def index():
+    # หน้าแรก — ส่ง index.html (React SPA ที่รันผ่าน Babel CDN ในเบราว์เซอร์
+    # ไม่มี build step) กลับไปให้ผู้ใช้.
     return render_template("index.html")
 
 
@@ -128,6 +130,14 @@ def ux_ui_static(filename: str):
 
 @app.route("/api/parse-pdf", methods=["POST"])
 def api_parse_pdf():
+    """รับไฟล์ statement PDF (multipart form field 'file') → แกะรายการออกมา.
+
+    รับ: ไฟล์ PDF (+ optional 'password' ถ้าไฟล์ติดรหัส)
+    คืน: {bank, count, filename, transactions[]} — ยังไม่บันทึกลง DB
+         (frontend เอาไปแสดง preview แล้วค่อยยิง POST /api/transactions บันทึก).
+    ด่านตรวจก่อนแกะ: ต้องมี field 'file' + นามสกุล .pdf + ไม่ว่าง + ไม่เกิน 10MB.
+    """
+    # ไม่มี field 'file' ในฟอร์ม → ปฏิเสธทันที (400 = client ส่งมาผิด)
     if "file" not in request.files:
         return jsonify({"error": "no file uploaded (field 'file' required)"}), 400
 
@@ -191,6 +201,8 @@ def _user_payload(user: User) -> dict:
     """
     sched = user.delete_scheduled_at
     days = None
+    # ถ้ามีนัดลบไว้ → คำนวณว่าเหลือกี่วันถึงกำหนดลบ (max(0,..) กันค่าติดลบวันที่เลย
+    # กำหนดแล้วแต่ cron ยังไม่ทันรัน) เพื่อให้ frontend โชว์ countdown ได้เลย.
     if sched is not None:
         delta = sched - datetime.utcnow()
         days = max(0, delta.days)
@@ -206,8 +218,15 @@ def _user_payload(user: User) -> dict:
 
 @app.route("/api/auth/login", methods=["POST"])
 def api_login():
+    """login แบบเบา (เดโม): upsert ด้วย email อย่างเดียว ไม่มีรหัสผ่าน.
+
+    รับ: {email, name?}  คืน: user payload (+ สถานะ grace-delete).
+    upsert = ถ้ามี user อยู่แล้ว → ใช้ตัวเดิม (update), ถ้ายังไม่มี → สร้างใหม่
+    (insert). "up-sert" = update-or-insert.
+    """
     body = request.get_json(silent=True) or {}
     email = (body.get("email") or "").strip().lower()
+    # ถ้าไม่ส่ง name มา ใช้ส่วนหน้า @ ของ email เป็นชื่อ default
     name = (body.get("name") or "").strip() or (email.split("@")[0] if email else "User")
     if not email:
         return jsonify({"error": "email required"}), 400
@@ -216,14 +235,17 @@ def api_login():
     try:
         user = db.query(User).filter_by(email=email).first()
         if user is None:
+            # ยังไม่มี user email นี้ → สร้างใหม่ + สร้างแถว Preference default ให้เลย
+            # (commit 2 รอบเพราะต้องได้ user.id ก่อน ถึงจะผูก Preference.user_id ได้)
             user = User(email=email, name=name)
             db.add(user)
             db.commit()
-            db.refresh(user)
+            db.refresh(user)  # refresh = ดึงค่าที่ DB สร้างให้ (เช่น id) กลับเข้า object
             # Seed default preferences row
             db.add(Preference(user_id=user.id))
             db.commit()
         elif name and not user.name:
+            # user เดิมมีอยู่แต่ยังไม่มีชื่อ → เติมชื่อให้ (ไม่ทับของเดิมถ้ามีแล้ว)
             user.name = name
             db.commit()
         # NOTE: we intentionally do NOT block login when delete_scheduled_at is
@@ -247,7 +269,9 @@ _GRACE_PERIOD_DAYS = 30
 
 @app.route("/api/users/<int:user_id>", methods=["GET"])
 def api_get_user(user_id: int):
-    """Return the user's profile + grace-period status.
+    """คืนโปรไฟล์ user + สถานะนัดลบบัญชี (ถ้ามี). 404 ถ้าไม่พบ id.
+
+    Return the user's profile + grace-period status.
 
     Used by the Settings page (Profile section) and the post-login Cancel-Delete
     banner. See ``_user_payload`` for the response shape.
@@ -264,7 +288,9 @@ def api_get_user(user_id: int):
 
 @app.route("/api/users/<int:user_id>", methods=["PATCH"])
 def api_patch_user(user_id: int):
-    """Update mutable user fields: ``name`` and/or ``display_name``.
+    """แก้ไขชื่อ user (name และ/หรือ display_name) — ส่งมาแค่ field ที่จะแก้.
+
+    Update mutable user fields: ``name`` and/or ``display_name``.
 
     Body (all fields optional — at least one required):
       ``{"name": "...", "display_name": "..."}``
@@ -282,6 +308,8 @@ def api_patch_user(user_id: int):
         if user is None:
             return jsonify({"error": "user not found"}), 404
 
+        # touched = ธงว่ามี field ที่แก้จริงไหม — ถ้าไม่มีเลยจะตอบ 400
+        # (กันกรณี client ส่ง body ว่างมาแล้ว commit เปล่าๆ)
         touched = False
         if "name" in body:
             new_name = (body.get("name") or "").strip()
@@ -312,7 +340,13 @@ def api_patch_user(user_id: int):
 
 @app.route("/api/users/<int:user_id>", methods=["DELETE"])
 def api_delete_user(user_id: int):
-    """Schedule a hard-delete with a 30-day grace period.
+    """ตั้งเวลาลบบัญชีถาวร (grace period 30 วัน) — ยังไม่ลบทันที.
+
+    ต้องยืนยัน 2 ชั้น (พิมพ์คำว่า DELETE + email ตรงกับบัญชี) กันกดพลาด/วางผิด.
+    ลบจริงเกิดใน cron (_run_grace_period_cleanup) หลังครบ 30 วัน — ระหว่างนั้น
+    login แล้วกด cancel-delete ยกเลิกได้ (pattern เดียวกับ Google/Facebook).
+
+    Schedule a hard-delete with a 30-day grace period.
 
     Body: ``{"confirm_text": "DELETE", "email": "<user.email>"}``
 
@@ -363,7 +397,12 @@ def api_delete_user(user_id: int):
 
 @app.route("/api/users/<int:user_id>/cancel-delete", methods=["POST"])
 def api_cancel_delete_user(user_id: int):
-    """Abort a pending hard-delete. Idempotent — safe to call when no delete
+    """ยกเลิกนัดลบบัญชี (เคลียร์ delete_scheduled_at กลับเป็น NULL).
+
+    Idempotent = เรียกซ้ำได้ปลอดภัย ถึงจะไม่มีนัดลบค้างอยู่ก็ตอบ ok
+    (was_scheduled บอกว่าตอนกดมีนัดค้างจริงไหม).
+
+    Abort a pending hard-delete. Idempotent — safe to call when no delete
     is scheduled (returns ok=true, was_scheduled=false)."""
     db = SessionLocal()
     try:
@@ -386,7 +425,9 @@ def api_cancel_delete_user(user_id: int):
 
 @app.route("/api/users/<int:user_id>/export-csv", methods=["GET"])
 def api_export_user_csv(user_id: int):
-    """Stream all of a user's transactions as a downloadable CSV.
+    """ดาวน์โหลดรายการทั้งหมดของ user เป็นไฟล์ CSV (สิทธิ์ portability ตาม PDPA).
+
+    Stream all of a user's transactions as a downloadable CSV.
 
     Format: ``date,merchant,amount,type,category,note`` with a header row.
     Sorted by date desc (matches the Transactions view ordering). Uses
@@ -441,7 +482,9 @@ def api_export_user_csv(user_id: int):
 
 @app.route("/api/line/status", methods=["GET"])
 def api_line_status():
-    """Return whether ``user_id`` has a LINE account linked.
+    """เช็คว่า user (จาก ?user_id=) ผูกบัญชี LINE ไว้หรือยัง (ใช้ในหน้า Settings).
+
+    Return whether ``user_id`` has a LINE account linked.
 
     Response shape:
       linked    → ``{"linked": true, "display_name": "...", "line_user_id": "U...", "linked_at": "..."}``
@@ -508,13 +551,23 @@ def _flask_signing_secret() -> str:
 
 
 def _make_oauth_state(user_id: int) -> str:
-    """Sign a short-lived state JWT carrying ``user_id``.
+    """สร้าง state token (JWT อายุสั้น 10 นาที) ที่ฝัง user_id ไว้ข้างใน.
+
+    JWT (JSON Web Token) = ก้อนข้อมูล JSON ที่ถูก "เซ็นชื่อ" ด้วย secret ของเรา
+    → ใครแก้ข้างในลายเซ็นจะเพี้ยนทันที ตรวจจับได้ว่าถูกปลอม. ใช้เป็นเกราะกัน
+    CSRF: ตอน LINE ส่ง callback กลับมา เราถอด token นี้เพื่อยืนยันว่า "คำขอนี้
+    เราเป็นคนเริ่มเอง + ผูกกับ user คนนี้จริง" (แฮกเกอร์ปลอม state ไม่ได้เพราะ
+    ไม่มี secret ไปเซ็น).
+
+    Sign a short-lived state JWT carrying ``user_id``.
 
     Algorithm: HS256 with FLASK_SECRET_KEY. The state parameter is LINE's
     primary CSRF defence — by binding it to a server-signed JWT with a 10-min
     expiry, an attacker can't craft a callback that links someone else's
     LINE account to the victim's web user.
     """
+    # lazy import = import ตรงจุดที่ใช้จริง (ไม่ import บนหัวไฟล์) → ถ้าเครื่องยัง
+    # ไม่ได้ลง PyJWT แอปก็ยัง start ได้ พังเฉพาะตอนเรียก route นี้ ไม่ล้มทั้งระบบ.
     import jwt  # lazy — keeps startup clean if PyJWT isn't installed yet
 
     secret = _flask_signing_secret()
@@ -561,7 +614,10 @@ def _verify_oauth_state(token: str) -> int:
 
 
 def _verify_line_id_token(id_token: str, channel_id: str, channel_secret: str) -> dict:
-    """Verify a LINE id_token (HS256) and return its claims.
+    """ตรวจ id_token ของ LINE (HS256) แล้วคืน claims — ห้าม fetch JWKS.
+
+    จุดพลาดง่าย: LINE เซ็น id_token ด้วย HS256 (symmetric key = channel_secret)
+    ไม่ใช่ RS256 + public key เหมือน Google/Apple → ห้ามไปดึง JWKS endpoint.
 
     LINE uses HS256 with the channel secret as the shared key — NOT RS256
     with a JWKS endpoint. Reference:
@@ -608,11 +664,19 @@ def _line_oauth_callback_url() -> str:
 
 
 def _line_link_redirect(success: bool, error_code: str = "") -> Response:
-    """Return a 302 back to the SPA with a result marker in the query string."""
+    """คืน redirect 302 กลับหน้าเว็บ พร้อมแปะผลลัพธ์ไว้ใน query string.
+
+    ทุกเส้นทาง (สำเร็จ/ล้มเหลว) จบที่ redirect เดียว → SPA อ่าน ?line_linked=1
+    หรือ ?line_error=<code> แล้วเด้ง toast. ไม่ตอบ JSON เพราะ ณ จุดนี้เบราว์เซอร์
+    กำลังตามลิงก์ redirect จาก LINE อยู่ (ไม่ใช่ fetch จาก JS).
+
+    Return a 302 back to the SPA with a result marker in the query string."""
     if success:
         target = "/?line_linked=1"
     else:
         # error_code is a short token only; never echoes user input or PII.
+        # sanitize: เหลือแค่ a-z0-9_ + ตัดยาว 32 ตัว → กัน error string แปลกปลอม
+        # (หรือ PII) หลุดไปโผล่บน URL ฝั่ง client.
         safe = re.sub(r"[^a-z0-9_]", "", (error_code or "unknown").lower())[:32] or "unknown"
         target = f"/?line_error={safe}"
     resp = Response(status=302)
@@ -622,7 +686,12 @@ def _line_link_redirect(success: bool, error_code: str = "") -> Response:
 
 @app.route("/api/line/oauth/url", methods=["GET"])
 def api_line_oauth_url():
-    """Build the LINE Login authorise URL for ``user_id``.
+    """สร้าง URL หน้าขออนุญาต LINE Login สำหรับ user (ปุ่ม "เชื่อมด้วย LINE").
+
+    รับ: ?user_id=<id>  คืน: {"url": "https://access.line.me/..."} ให้ frontend
+    พาผู้ใช้ไปกดอนุญาตที่ LINE. ใน URL มี state JWT ฝังไว้ (กัน CSRF).
+
+    Build the LINE Login authorise URL for ``user_id``.
 
     Returns ``{"url": "<https://access.line.me/...>"}``. The frontend should
     open this URL (full navigation, not popup) so the LINE redirect callback
@@ -673,7 +742,14 @@ def api_line_oauth_url():
 
 @app.route("/api/line/oauth/callback", methods=["GET"])
 def api_line_oauth_callback():
-    """Handle LINE's redirect after the user grants consent.
+    """ปลายทางที่ LINE เด้งกลับมาหลังผู้ใช้กดอนุญาต (หรือกดยกเลิก).
+
+    ขั้นตอนใน route นี้ (4 สเต็ป): (1) ตรวจ state JWT ว่าเราเซ็นเองและยังไม่หมดอายุ
+    → (2) เอา code ไปแลก token กับ LINE → (3) ตรวจ id_token ว่าของจริง แล้วดึง
+    line_user_id ออกมา → (4) เรียก _link_line_to_user ผูกบัญชี แล้ว redirect กลับ
+    เว็บพร้อมผลลัพธ์. ทุก error เด้งกลับ /?line_error=<code> (ไม่โยน 4xx/5xx JSON).
+
+    Handle LINE's redirect after the user grants consent.
 
     LINE sends ``?code=...&state=...`` on success, or
     ``?error=...&error_description=...&state=...`` on user-cancel / failure.
@@ -760,8 +836,8 @@ def api_line_oauth_callback():
         return _line_link_redirect(False, "invalid_token")
     display_name = (claims.get("name") or "").strip()
 
-    # 4) Reuse the email-command's link logic so safety guard (auto-user data
-    # move + MerchantOverride cleanup) lives in exactly one place.
+    # 4) ใช้ตรรกะผูกบัญชีตัวเดียวกับคำสั่ง "เชื่อม <email>" (DRY — เขียนที่เดียว)
+    # เพื่อให้ safety guard (ย้ายข้อมูล auto-user + เคลียร์ MerchantOverride) อยู่จุดเดียว.
     from backend.line_bot import _link_line_to_user
 
     db = SessionLocal()
@@ -793,7 +869,12 @@ def api_line_oauth_callback():
 
 @app.route("/api/line/unlink", methods=["POST"])
 def api_line_unlink():
-    """Remove the LINE↔MoneyMind link for ``user_id``.
+    """ยกเลิกการเชื่อม LINE ของ user (ลบเฉพาะแถว LineUser).
+
+    ไม่แตะ transactions/imports/notifications — ข้อมูลยังอยู่กับบัญชีเว็บครบ
+    (เชื่อมใหม่ทีหลังได้). รับ body {user_id}.
+
+    Remove the LINE↔MoneyMind link for ``user_id``.
 
     After unlink the LINE user can re-link by sending ``เชื่อม <email>`` to the
     bot again. We do NOT touch transactions/imports/notifications — they stay
@@ -820,6 +901,7 @@ def api_line_unlink():
 
 @app.route("/api/transactions", methods=["GET"])
 def api_list_transactions():
+    """คืนรายการ transaction ทั้งหมดของ user เรียงวันที่ล่าสุดก่อน (ใช้ index user_id)."""
     user_id = request.args.get("user_id", type=int)
     if not user_id:
         return jsonify({"error": "user_id required"}), 400
@@ -857,7 +939,9 @@ def _normalize_merchant(m) -> str:
 
 
 def _apply_overrides(db, user_id: int, txs: list[dict]) -> list[dict]:
-    """Re-categorise tx dicts whose merchant matches a saved override.
+    """จัดหมวดใหม่ให้ tx ที่ merchant ตรงกับ override ที่ user เคยสอนไว้ (Learning Loop).
+
+    Re-categorise tx dicts whose merchant matches a saved override.
 
     Mutates each tx dict in place (setting ``tx['category']``) and returns
     the same list for chaining. Uses a single indexed query on
@@ -900,11 +984,15 @@ def _dedup_build_rows(db, user_id: int, txs: list[dict], import_id):
 
     Shared by ``POST /api/transactions`` (web) and ``_handle_pdf`` (LINE).
     """
+    # ดึงเฉพาะ 3 คอลัมน์ที่ใช้ทำ fingerprint (ไม่ดึงทั้งแถว) ด้วย query เดียว
+    # → เอามาทำเป็น set เพื่อเช็คซ้ำแบบ O(1) ต่อรายการ (ไม่ยิง DB ทีละแถว = กัน N+1).
     existing_rows = (
         db.query(Transaction.date, Transaction.amount, Transaction.merchant)
         .filter(Transaction.user_id == user_id)
         .all()
     )
+    # fingerprint = (วันที่ 10 ตัวแรก, ยอดปัดทศนิยม 2, ชื่อร้าน lowercase+trim)
+    # → 3 อย่างนี้ตรงกันเมื่อไหร่ถือว่า "รายการเดียวกัน" (กันอัปโหลดไฟล์ทับซ้ำ)
     existing: set[tuple[str, float, str]] = {
         ((d or "")[:10], round(float(a or 0), 2), (m or "").strip().lower())
         for d, a, m in existing_rows
@@ -923,6 +1011,8 @@ def _dedup_build_rows(db, user_id: int, txs: list[dict], import_id):
             amount = 0.0
         fp = (date, round(amount, 2), merchant.strip().lower())
 
+        # ซ้ำกับที่มีใน DB อยู่แล้ว หรือ ซ้ำกับรายการก่อนหน้าในไฟล์ชุดเดียวกันนี้
+        # → ข้าม (นับ skipped). seen_in_batch กันซ้ำภายในไฟล์เดียวกันด้วย.
         if fp in existing or fp in seen_in_batch:
             skipped += 1
             continue
@@ -944,6 +1034,11 @@ def _dedup_build_rows(db, user_id: int, txs: list[dict], import_id):
 
 @app.route("/api/transactions", methods=["POST"])
 def api_create_transactions():
+    """Bulk-insert transaction: apply Learning Loop overrides → dedup → บันทึก.
+
+    หลัง insert ถ้ามีรายการใหม่ (created>0) จะ push budget alert เข้า LINE ให้ด้วย
+    (ข้ามถ้าเป็นซ้ำทั้งหมด — ยอดรวมไม่ขยับ ไม่มีอะไรต้องเตือน).
+    """
     body = request.get_json(silent=True) or {}
     user_id = body.get("user_id")
     txs = body.get("transactions") or []
@@ -987,7 +1082,13 @@ def api_create_transactions():
 
 @app.route("/api/transactions/<int:tx_id>", methods=["PATCH"])
 def api_patch_transaction(tx_id: int):
-    """Re-categorise a single transaction (Learning Loop, Day 5).
+    """เปลี่ยนหมวดของ tx 1 รายการ + (option) จำไว้สอนระบบ (Learning Loop).
+
+    ถ้า save_pattern=true จะ upsert MerchantOverride → ครั้งหน้า import ร้านเดิม
+    ระบบจัดหมวดนี้ให้อัตโนมัติ. มี ownership check (403 ถ้า tx ไม่ใช่ของ user นี้)
+    กันคนแก้ข้อมูลคนอื่นด้วยการเดา id.
+
+    Re-categorise a single transaction (Learning Loop, Day 5).
 
     Body: ``{"user_id": int, "category": str, "save_pattern": bool}``
     Response: ``{"updated": 1, "override_saved": true|false}``
@@ -1016,6 +1117,7 @@ def api_patch_transaction(tx_id: int):
         tx = db.query(Transaction).filter_by(id=tx_id).first()
         if tx is None:
             return jsonify({"error": "not found"}), 404
+        # ownership guard — tx นี้ต้องเป็นของ user ที่ส่งมา ไม่งั้น 403 (ห้ามแก้ของคนอื่น)
         if tx.user_id != int(user_id):
             return jsonify({"error": "forbidden"}), 403
 
@@ -1025,6 +1127,8 @@ def api_patch_transaction(tx_id: int):
         if save_pattern:
             merchant_norm = _normalize_merchant(tx.merchant)
             if merchant_norm:
+                # upsert MerchantOverride แบบ manual: หาแถวเดิมก่อน — มีแล้วก็ update
+                # หมวด, ไม่มีก็ insert ใหม่ (กันสร้างซ้ำ + เคารพ UniqueConstraint)
                 existing = (
                     db.query(MerchantOverride)
                     .filter_by(user_id=int(user_id), merchant_norm=merchant_norm)
@@ -1054,6 +1158,7 @@ def api_patch_transaction(tx_id: int):
 
 @app.route("/api/imports", methods=["POST"])
 def api_create_import():
+    """สร้าง audit record ของการอัปโหลด statement 1 ครั้ง (filename/bank/count)."""
     body = request.get_json(silent=True) or {}
     user_id = body.get("user_id")
     if not user_id:
@@ -1077,6 +1182,7 @@ def api_create_import():
 
 @app.route("/api/imports", methods=["GET"])
 def api_list_imports():
+    """คืนประวัติการอัปโหลด statement ของ user เรียงล่าสุดก่อน."""
     user_id = request.args.get("user_id", type=int)
     if not user_id:
         return jsonify({"error": "user_id required"}), 400
@@ -1090,7 +1196,12 @@ def api_list_imports():
 
 @app.route("/api/imports/<int:import_id>", methods=["DELETE"])
 def api_delete_import(import_id: int):
-    """Undo an import: delete the Import row plus every Transaction whose
+    """Undo การนำเข้า: ลบแถว Import + tx ทุกตัวที่มาจาก import นั้น (source_import_id).
+
+    ต้องส่ง ?user_id เพื่อเช็คความเป็นเจ้าของ (403 ถ้าไม่ตรง) — กันคนเดา id
+    แล้วลบ import ของคนอื่น.
+
+    Undo an import: delete the Import row plus every Transaction whose
     source_import_id matches.
 
     Requires ``?user_id=<int>`` to verify ownership — without this anyone
@@ -1128,7 +1239,13 @@ def api_delete_import(import_id: int):
 
 @app.route("/api/reset", methods=["POST"])
 def api_reset_user_data():
-    """Wipe all statement-related data for a user (Day 4 feature).
+    """ล้างข้อมูล statement ของ user (tx + imports + notifications) แบบเริ่มใหม่.
+
+    เก็บบัญชี/งบ/การเชื่อม LINE ไว้ ลบเฉพาะข้อมูลรายการ. ต้องส่ง ?user_id.
+    หมายเหตุ FK: ต้องลบ Transaction ก่อน Import เพราะ tx อ้าง imports.id อยู่
+    (ลบพ่อก่อนลูก Postgres จะ error).
+
+    Wipe all statement-related data for a user (Day 4 feature).
 
     Deletes every Transaction, Import, and Notification owned by ``user_id``.
     Keeps the User row, Preference (incl. category_budgets) and any LineUser
@@ -1189,6 +1306,7 @@ def api_reset_user_data():
 
 @app.route("/api/notifications", methods=["GET"])
 def api_list_notifications():
+    """คืนการแจ้งเตือนล่าสุด 50 รายการของ user (เรียงใหม่ไปเก่า)."""
     user_id = request.args.get("user_id", type=int)
     if not user_id:
         return jsonify({"error": "user_id required"}), 400
@@ -1208,6 +1326,7 @@ def api_list_notifications():
 
 @app.route("/api/notifications", methods=["POST"])
 def api_create_notification():
+    """สร้างการแจ้งเตือน 1 รายการ (title/desc เก็บเป็น i18n JSON {th,en})."""
     body = request.get_json(silent=True) or {}
     user_id = body.get("user_id")
     if not user_id:
@@ -1232,6 +1351,7 @@ def api_create_notification():
 
 @app.route("/api/notifications/mark-read", methods=["POST"])
 def api_mark_read():
+    """mark การแจ้งเตือนที่ยังไม่อ่านของ user ทั้งหมดเป็นอ่านแล้ว (bulk update)."""
     body = request.get_json(silent=True) or {}
     user_id = body.get("user_id")
     if not user_id:
@@ -1249,6 +1369,7 @@ def api_mark_read():
 
 @app.route("/api/preferences/<int:user_id>", methods=["GET"])
 def api_get_prefs(user_id: int):
+    """คืน preferences ของ user — สร้าง row default ให้อัตโนมัติถ้ายังไม่มี."""
     db = SessionLocal()
     try:
         p = db.query(Preference).filter_by(user_id=user_id).first()
@@ -1264,6 +1385,11 @@ def api_get_prefs(user_id: int):
 
 @app.route("/api/preferences/<int:user_id>", methods=["PUT"])
 def api_set_prefs(user_id: int):
+    """อัปเดต preferences แบบ partial — เขียนเฉพาะ key ที่ส่งมาใน body.
+
+    หมายเหตุ: ``theme`` ผ่าน whitelist เข้ม 'light'/'dark' เท่านั้น
+    (กันค่าแปลกปลอมหลุดเข้าไปใน CSS selector/class ฝั่ง frontend).
+    """
     body = request.get_json(silent=True) or {}
     db = SessionLocal()
     try:
@@ -1427,6 +1553,12 @@ def _call_anthropic(prompt: str) -> str:
 
 @app.route("/api/ai/complete", methods=["POST"])
 def api_ai_complete():
+    """พร็อกซี AI: รับ {prompt} → ลอง Gemini ก่อน ไม่ได้ค่อย fallback Anthropic.
+
+    คืน {"text": "..."} เสมอ (แม้ไม่มี key/ล้มทั้งคู่ก็คืน text ว่าง 200/502)
+    เพื่อให้ frontend มี null-fallback แสดงผลได้ ไม่ crash. ใช้โดยปุ่ม "วิเคราะห์
+    ด้วย AI" + ChatPanel "คุยกับ Mind".
+    """
     body = request.get_json(silent=True) or {}
     prompt = (body.get("prompt") or "").strip()
 
@@ -1486,11 +1618,17 @@ def api_ai_complete():
 
 @app.route("/webhook/line", methods=["POST"])
 def line_webhook():
-    """Receives LINE Messaging API webhook events."""
+    """รับ event จาก LINE (ข้อความ/ไฟล์/เพิ่มเพื่อน) แล้วส่งต่อให้ handler ประมวลผล.
+
+    Receives LINE Messaging API webhook events.
+    """
     line_handler = _get_line_handler()
     if line_handler is None:
         return jsonify({"error": "LINE bot not configured"}), 503
 
+    # X-Line-Signature = ลายเซ็นที่ LINE แนบมากับทุก request (HMAC ด้วย channel
+    # secret). handler.handle() จะตรวจว่า body ตรงกับลายเซ็นไหม — ด่านความปลอดภัย
+    # สำคัญ กันคนปลอม request ยิงเข้ามา. ห้ามข้ามการตรวจนี้เด็ดขาด.
     signature = request.headers.get("X-Line-Signature", "")
     body = request.get_data(as_text=True)
 
@@ -1498,6 +1636,7 @@ def line_webhook():
         from linebot.v3.exceptions import InvalidSignatureError
         line_handler.handle(body, signature)
     except InvalidSignatureError:
+        # ลายเซ็นไม่ตรง = request ไม่ได้มาจาก LINE จริง → ปฏิเสธ 400
         log.warning("LINE webhook: invalid signature")
         return jsonify({"error": "invalid signature"}), 400
     except Exception as exc:
@@ -1510,7 +1649,12 @@ def line_webhook():
 # ─── Grace Period Cleanup (Sprint 5) ────────────────────────────────────────
 
 def _run_grace_period_cleanup() -> int:
-    """Hard-delete every user whose 30-day grace period has expired.
+    """ลบถาวร user ที่หมด grace period 30 วันแล้ว + ข้อมูลลูกทั้งหมด (cascade).
+
+    ลำดับ cascade สำคัญมาก: ต้องลบตารางลูก (FK → users.id) ให้หมดก่อนค่อยลบ
+    แถว ``users`` ไม่งั้น Postgres จะ reject ด้วย FK constraint. ลำดับที่ใช้:
+    MerchantOverride → Transaction → Import → Notification → Preference →
+    LinePendingPdf (resolve ผ่าน line_user_id ก่อน) → LineUser → User.
 
     Cascade order matters: child rows (FK → users.id) must be removed before
     the parent ``users`` row, otherwise Postgres' foreign-key constraints
@@ -1641,6 +1785,7 @@ def api_run_grace_cleanup():
 
 @app.route("/api/health")
 def health():
+    # liveness check — ให้ Render/uptime monitor ยิงมาเช็คว่าแอปยังตอบอยู่ (200 = ยังมีชีวิต)
     return jsonify({"ok": True})
 
 

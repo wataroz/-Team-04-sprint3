@@ -1,12 +1,25 @@
 /* ============================================================
    MoneyMind — UI primitives (icons + small components)
    Exposed to window for use by views.jsx and app.jsx
+
+   สารบัญคอมโพเนนต์:
+     Ic              — ชุดไอคอน line-style (currentColor)
+     useCountUp      — hook นับเลขไต่ระดับ (rAF + ease-out)
+     BalanceDisplay  — ยอดคงเหลือตัวใหญ่
+     Sparkline       — กราฟเส้นเล็ก (area)
+     Donut           — โดนัทสัดส่วนหมวด
+     AreaChart       — กราฟแนวโน้ม (line + area + axis + tooltip)
+     KPI             — การ์ดตัวเลขสรุป
+     TransactionRow  — แถวรายการ + formatDate / formatGroupDate
+     ScoreRing       — วงแหวนคะแนนสุขภาพการเงิน
    ============================================================ */
 
 const { useState, useEffect, useRef, useMemo } = React;
 
 // ─────────────────────────────────────────────────────────────
 // Icons — line-style, currentColor
+// ชุดไอคอน SVG แบบเส้น | stroke="currentColor" = สีเส้นตามสีตัวอักษร (color) ของ element แม่
+// → เปลี่ยนสีไอคอนได้แค่ตั้ง color ที่ตัวครอบ ไม่ต้องแก้โค้ด SVG ทีละอัน
 // ─────────────────────────────────────────────────────────────
 const Ic = {
   home: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M3 11l9-7 9 7v9a2 2 0 0 1-2 2h-3v-7H8v7H5a2 2 0 0 1-2-2z" /></svg>,
@@ -40,6 +53,8 @@ const Ic = {
 
 // ─────────────────────────────────────────────────────────────
 // Animated number counter
+// นับจาก 0 → target ด้วย requestAnimationFrame + ease-out cubic
+// (ลื่นกว่า setInterval และหยุดเองเมื่อ component unmount)
 // ─────────────────────────────────────────────────────────────
 function useCountUp(target, { duration = 900, delay = 0 } = {}) {
   const [value, setValue] = useState(0);
@@ -64,6 +79,8 @@ function useCountUp(target, { duration = 900, delay = 0 } = {}) {
 
 // ─────────────────────────────────────────────────────────────
 // Big balance display
+// ยอดคงเหลือตัวใหญ่กลางแดชบอร์ด — ใช้ useCountUp นับไต่จาก 0 ขึ้นไปตอนโหลด
+// แล้วบังคับฟอนต์ตัวเลข var(--num) ให้อ่านง่าย + แยกสกุลเงิน/หลัก/เครื่องหมายเป็นคนละ span
 // ─────────────────────────────────────────────────────────────
 function BalanceDisplay({ amount, currency, lang }) {
   const animated = useCountUp(amount, { duration: 1100 });
@@ -78,6 +95,9 @@ function BalanceDisplay({ amount, currency, lang }) {
 
 // ─────────────────────────────────────────────────────────────
 // Sparkline (area chart) — accepts series array, draws SVG path
+// กราฟเส้นเล็กๆ ใต้ยอดเงิน วาดด้วย SVG <path> จากอาเรย์ตัวเลข (series)
+// viewBox = ระบบพิกัดภายใน SVG | preserveAspectRatio="none" = ยอมให้ยืดเต็มความกว้างพ่อแม่
+// เส้นค่อยๆ วิ่งวาดตอนโหลดด้วยลูกเล่น strokeDasharray/strokeDashoffset (เส้นประยาว = ซ่อนเส้นไว้ก่อน)
 // ─────────────────────────────────────────────────────────────
 function Sparkline({ series, height = 80, color = 'var(--accent)', fill = 'var(--accent-soft)', showAxis = false }) {
   const W = 800,H = height;
@@ -137,6 +157,8 @@ function Sparkline({ series, height = 80, color = 'var(--accent)', fill = 'var(-
 
 // ─────────────────────────────────────────────────────────────
 // Donut chart (animated arcs)
+// โดนัทแสดงสัดส่วนแต่ละหมวด — แต่ละชิ้น(arc) คือวงกลมที่โชว์เส้นขอบเพียงบางส่วน
+// ผ่าน strokeDasharray (ความยาวเส้นที่โชว์) + strokeDashoffset (จุดเริ่ม) แล้ว transition ให้ค่อยๆ วิ่งเข้า
 // ─────────────────────────────────────────────────────────────
 function Donut({ slices, size = 220, thickness = 22, totalLabel, totalValue }) {
   const cx = size / 2;
@@ -210,6 +232,9 @@ function Donut({ slices, size = 220, thickness = 22, totalLabel, totalValue }) {
 
 // ─────────────────────────────────────────────────────────────
 // Area chart for trend (line + area + axes + tooltip + touch)
+// กราฟแนวโน้มรายจ่าย — เส้น + พื้นที่ใต้เส้น + แกน + tooltip ตอนเอาเมาส์/นิ้วชี้
+// ป้ายแกน X/Y วาดเป็น HTML ทับ SVG (ไม่ฝังใน SVG) เพราะ preserveAspectRatio="none"
+// จะยืดตัวอักษรใน SVG ให้เพี้ยน — วาง HTML overlay จึงคมชัดเสมอทุกขนาดจอ
 // ─────────────────────────────────────────────────────────────
 // Format a baht value into a short axis label: 1234 -> "1.2K", 12000 -> "12K"
 function fmtAxisShort(v) {
@@ -579,6 +604,8 @@ function ScoreRing({ score, size = 200, thickness = 14 }) {
 }
 
 // Expose to window for views.jsx/app.jsx
+// โปรเจกต์นี้ไม่มีขั้นตอน build/import (โหลด React ผ่าน CDN ตรงๆ)
+// จึง "แปะ" คอมโพเนนต์ไว้บน window (ตัวแปร global) เพื่อให้ views.jsx/app.jsx เรียกใช้ได้ทันที
 Object.assign(window, {
   Ic, BalanceDisplay, Sparkline, Donut, AreaChart,
   KPI, TransactionRow, ScoreRing, useCountUp,

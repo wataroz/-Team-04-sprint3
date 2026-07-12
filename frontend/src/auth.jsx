@@ -3,10 +3,16 @@
    Split layout: left = brand/quote, right = form
    ============================================================ */
 
+// [TH] ดึง useState ออกจาก React (โหลดผ่าน CDN เป็น global) มาตั้งชื่อใหม่ว่า useStateA
+// เพื่อกันชนกับ useState ที่ไฟล์อื่น (app.jsx/views.jsx) ประกาศไว้ — เพราะไม่มี build step
+// ทุกไฟล์จึงอยู่ global scope เดียวกัน (hook = ฟังก์ชันพิเศษของ React ที่ให้ component จำ state ได้)
 const { useState: useStateA } = React;
 
 // ─────────────────────────────────────────────────────────────
 // Auth Hero (left panel — shared between Login + Register)
+// [TH] แผงซ้ายของหน้า auth — โลโก้ + คำโปรย + list ฟีเจอร์ (ไม่มี state ของตัวเอง)
+// รับ prop `lang` ตัวเดียวเพื่อเลือกข้อความไทย/อังกฤษ
+// (props = ค่าที่ component แม่ส่งลงมาให้ลูกใช้ อ่านได้อย่างเดียว ห้ามแก้)
 // ─────────────────────────────────────────────────────────────
 function AuthHero({ lang }) {
   const features = lang === 'th' ? [
@@ -55,6 +61,11 @@ function AuthHero({ lang }) {
 
 // ─────────────────────────────────────────────────────────────
 // Login
+// [TH] หน้าเข้าสู่ระบบ — ฟอร์มกรอก email + password
+//   props: onLogin(user) = callback เมื่อ login สำเร็จ (app.jsx เก็บ user ลง state)
+//          goRegister / goForgot = สลับไปหน้า สมัคร / ลืมรหัส
+//   state: email/password = controlled input (React ถือค่าใน state, ค่าใน <input> ผูกกับ
+//          value + onChange), busy = กันกดซ้ำระหว่างยิง API, showPw = สลับซ่อน/โชว์รหัส
 // ─────────────────────────────────────────────────────────────
 function Login({ lang, onLogin, goRegister, goForgot }) {
   const [email, setEmail] = useStateA('demo@moneymind.app');
@@ -65,6 +76,9 @@ function Login({ lang, onLogin, goRegister, goForgot }) {
   const [busy, setBusy] = useStateA(false);
   const [socialBusy, setSocialBusy] = useStateA(null); // 'google' | 'apple' | null
 
+  // [TH] กดปุ่ม "เข้าสู่ระบบ" → กันไม่ให้ฟอร์ม reload หน้า (preventDefault) → validate ช่องว่าง
+  // → POST /api/auth/login {email, name} : backend upsert user จาก email แล้วคืน object user
+  // → เรียก onLogin(u) (demo นี้ยังไม่ตรวจ password จริง — ระบบ auth เต็มเป็น backlog)
   const submit = (e) => {
     e.preventDefault();
     setError('');
@@ -88,6 +102,8 @@ function Login({ lang, onLogin, goRegister, goForgot }) {
       });
   };
 
+  // [TH] Social login (Google/Apple) เป็น demo เท่านั้น — ยังไม่มี OAuth จริง
+  // จึง upsert user ด้วย email placeholder ผ่าน endpoint เดียวกับ login ปกติ
   const social = (provider) => {
     if (busy || socialBusy) return;
     setSocialBusy(provider);
@@ -192,6 +208,10 @@ function Login({ lang, onLogin, goRegister, goForgot }) {
 
 // ─────────────────────────────────────────────────────────────
 // Register
+// [TH] หน้าสมัครสมาชิก — กรอกชื่อ + email + password + ติ๊กยอมรับเงื่อนไข
+//   มีแถบวัดความแข็งแรงรหัสผ่าน (strength meter) ที่คำนวณสด ๆ ตามที่พิมพ์
+//   submit ยิง endpoint เดียวกับ login (/api/auth/login) เพราะ backend ใช้ upsert
+//   (มี email อยู่แล้ว = เข้าสู่ระบบ, ยังไม่มี = สร้างใหม่)
 // ─────────────────────────────────────────────────────────────
 function Register({ lang, onLogin, goLogin }) {
   const [name, setName] = useStateA('');
@@ -203,6 +223,7 @@ function Register({ lang, onLogin, goLogin }) {
   const [busy, setBusy] = useStateA(false);
 
   // Password strength meter
+  // [TH] ให้คะแนน 0-4 ตามเกณฑ์: ยาว >=8 / มีตัวพิมพ์ใหญ่ / มีตัวเลข / มีอักขระพิเศษ
   const strength = (() => {
     let s = 0;
     if (password.length >= 8) s++;
@@ -372,6 +393,8 @@ function Spinner() {
 
 // ─────────────────────────────────────────────────────────────
 // Forgot Password
+// [TH] หน้าลืมรหัสผ่าน — เป็น demo: กรอก email แล้วใช้ setTimeout จำลองการส่งลิงก์รีเซ็ต
+// (ยังไม่ได้ยิง API จริง) เมื่อ sent=true จะสลับ UI ไปหน้า "เช็คกล่องเมล"
 // ─────────────────────────────────────────────────────────────
 function Forgot({ lang, goLogin }) {
   const [email, setEmail] = useStateA('');

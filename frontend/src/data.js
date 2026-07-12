@@ -4,6 +4,10 @@
    ============================================================ */
 
 // Category palette (kept restrained — neutrals + small accents)
+// [TH] ตารางหมวดหมู่ 9 หมวด — key (food/transport/...) ต้องตรงกับหมวดที่ backend ส่งกลับ
+// (logic_ai/pdf_parser.py) แต่ละหมวดเก็บ 4 ค่า: th/en = ชื่อไทย/อังกฤษ (อ่านผ่าน helper t())
+// · icon = อีโมจิ · color = สีประจำหมวด (ใช้กับ donut chart / chip / แถบ progress)
+// 'other' = หมวดสำรองเมื่อจัดหมวดไม่ได้, 'income' = รายรับ (ไม่ใช่หมวดรายจ่าย)
 const CATEGORIES = {
   food:      { th: 'อาหารและเครื่องดื่ม', en: 'Food & Drink',   icon: '🍜', color: '#D88A8A' },
   transport: { th: 'เดินทาง',              en: 'Transport',     icon: '🚕', color: '#8AB4D8' },
@@ -17,6 +21,9 @@ const CATEGORIES = {
 };
 
 // 30-day daily expense series for the sparkline (synthetic but realistic)
+// [TH] ชุดตัวเลขรายจ่ายรายวัน 30 จุด ใช้วาดกราฟ sparkline ตอนยังไม่มีข้อมูลจริง —
+// deriveTrendSeries() ใน views.jsx จะสลับมาใช้ข้อมูลจริงเมื่อ user นำเข้า statement แล้ว
+// (SERIES_90D = รายสัปดาห์ 13 จุด, SERIES_1Y = รายเดือน 12 จุด สำหรับปุ่มสลับช่วง 30D/90D/1Y)
 const DAILY_SERIES = [
   220, 380, 145, 0, 612, 295, 410,
   185, 0, 540, 320, 275, 180, 760,
@@ -38,6 +45,9 @@ const SERIES_1Y = [
 ];
 
 // Sample transactions — realistic Thai merchants
+// [TH] makeTx = helper ย่อสำหรับสร้าง object ธุรกรรม 1 รายการ (amount ติดลบ = รายจ่าย,
+// บวก = รายรับ) — SAMPLE_TX ด้านล่างเป็น mock ไว้โชว์หน้าตา demo เฉย ๆ
+// ข้อมูลจริงของผู้ใช้มาจาก backend (GET /api/transactions) หลัง login
 function makeTx(date, merchant, amount, category, note) {
   return { date, merchant, amount, category, note: note || '' };
 }
@@ -77,6 +87,8 @@ const SAMPLE_TX = [
 ];
 
 // AI Insights (pre-generated for demo)
+// [TH] ตัวอย่างผลวิเคราะห์ AI (คะแนนสุขภาพการเงิน + การ์ด insight) เขียนไว้ล่วงหน้าสำหรับ demo
+// ของจริงหน้า Insights จะ derive จาก txs เอง หรือเรียก AI ผ่าน /api/ai/complete
 const SAMPLE_INSIGHTS = {
   score: 72,
   rating: { th: 'อยู่ในเกณฑ์ดี', en: 'In good shape' },
@@ -149,6 +161,8 @@ const SAMPLE_INSIGHTS = {
 };
 
 // i18n strings used across the app
+// [TH] ทุก key ต้องมีทั้ง th + en เสมอ — อ่านค่าผ่าน helper t(obj, lang) ด้านล่าง
+// ตัวยึด {n}/{m}/{merchant} แทนค่าจริงด้วย .replace() ที่ฝั่งผู้เรียก
 const I18N = {
   nav: {
     overview:     { th: 'ภาพรวม',           en: 'Overview' },
@@ -381,6 +395,8 @@ const I18N = {
 };
 
 // Currency formatter
+// [TH] จัดรูปจำนวนเงินตามสกุล + ภาษา — USD ใช้อัตราประมาณ 1 USD ≈ 35 THB
+// (ค่าคงที่สำหรับ demo ไม่ได้ดึง rate จริง) THB ปัดเศษเป็นจำนวนเต็ม
 function fmt(amount, currency, lang) {
   const abs = Math.abs(amount);
   const sign = amount < 0 ? '-' : '';
@@ -402,6 +418,8 @@ function fmtParts(amount, currency, lang) {
   return { sign, currency: '฿', digits: abs.toLocaleString(lang === 'th' ? 'th-TH' : 'en-US', { maximumFractionDigits: 0 }) };
 }
 
+// [TH] helper อ่านข้อความตามภาษา — รับได้ทั้ง object {th,en} หรือ string ตรง ๆ
+// fallback: ภาษาที่เลือก → en → '' (กัน undefined ทะลุลง UI)
 function t(obj, lang) {
   if (!obj) return '';
   if (typeof obj === 'string') return obj;
@@ -409,6 +427,8 @@ function t(obj, lang) {
 }
 
 // Sample notifications (mock)
+// [TH] การแจ้งเตือนตัวอย่าง (mock) — โครงเดียวกับที่ backend ส่งมา: type (good/warn/info)
+// คุมสี, icon = ชื่อไอคอน, title/desc/time = object {th,en}, unread = ยังไม่อ่านไหม
 const SAMPLE_NOTIFICATIONS = [
   {
     type: 'warn',
@@ -461,6 +481,8 @@ const SAMPLE_NOTIFICATIONS = [
 ];
 
 // Brand glyph SVG (used in sidebar & elsewhere)
+// [TH] โลโก้ MoneyMind เป็น SVG แบบ inline string (block M + กรอบครีม + เส้นทอง) —
+// เก็บเป็นข้อความเพื่อ inject ผ่าน dangerouslySetInnerHTML ใน sidebar/หน้า auth ได้เลย
 const BRAND_GLYPH = `
 <svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
   <rect x="56" y="56" width="400" height="400" rx="72" ry="72" fill="#F5EFE3"/>
@@ -481,6 +503,8 @@ const BRAND_GLYPH = `
 `;
 
 // Expose to window
+// [TH] โปรเจกต์นี้ไม่มี build step (รันผ่าน Babel CDN ในเบราว์เซอร์) จึงไม่มี import/export
+// วิธีแชร์ค่าข้ามไฟล์คือแปะไว้บน window (global) แล้วไฟล์ .jsx อื่นเรียกใช้ชื่อได้ตรง ๆ
 Object.assign(window, {
   CATEGORIES, DAILY_SERIES, SERIES_90D, SERIES_1Y, SAMPLE_TX, SAMPLE_INSIGHTS, SAMPLE_NOTIFICATIONS,
   I18N, fmt, fmtParts, t, BRAND_GLYPH,
