@@ -21,6 +21,8 @@ from typing import Iterable
 
 import pdfplumber
 
+from logic_ai.seed_merchants import AMBIGUOUS_SEED_KEYS, SEED_MERCHANTS
+
 try:
     from pdfminer.pdfdocument import PDFPasswordIncorrect
 except ImportError:
@@ -327,7 +329,12 @@ _CATEGORY_RULES: list[tuple[str, re.Pattern]] = [
         re.compile(
             r"\b(rent|electric(?:ity)?\s*bill|water\s*bill|wifi|internet|"
             r"tot|ais(?:\s*fibre|\s*postpaid|\s*prepaid)?|true(?:move|\s*online|"
-            r"\s*vision|\s*id)?|dtac|3bb|nt\s*broadband|"
+            # true(...) บังคับต้องมี suffix เสมอ (ไม่มี "?" ต่อท้ายกลุ่ม) — กัน
+            # "true" คำเดี่ยวๆ (บูลีน/สถานะทั่วไป เช่น "สถานะ true ปกติ") หลุดมา
+            # ตกหมวด home ผิดๆ. ถ้า merchant ทั้งสตริงเป็น "True" เป๊ะจริงๆ (ไม่มี
+            # suffix) seed dictionary exact-match layer จะดักไว้แทน (ดู
+            # AMBIGUOUS_SEED_KEYS ใน seed_merchants.py — "True" อยู่ในลิสต์นี้).
+            r"\s*vision|\s*id)|dtac|3bb|nt\s*broadband|"
             r"pea|mea|metropolitan\s*electricity|provincial\s*electricity|"
             r"apartment|condo|condominium|dormitory|"
             r"bill\s*payment|utility|utilities)\b|"
@@ -405,6 +412,97 @@ def _normalize(s: str) -> str:
     return out
 
 
+# ============================================================
+# Seed dictionary layer (ฐานร้านดังไทย pre-load — แก้ cold start)
+# ------------------------------------------------------------
+# ชั้นกลางระหว่าง Learning Loop (per-user override) กับ regex keyword:
+# ร้านดังสาธารณะที่ pre-load ไว้ → จัดหมวดถูกตั้งแต่รายการแรก โดยไม่ต้อง
+# รอ user สอน. ดูรายการ + เหตุผลเลือกร้านใน logic_ai/seed_merchants.py.
+#
+# _SEED_LOOKUP = normalize key ของ SEED_MERCHANTS ครั้งเดียวตอน import
+# (ด้วย _normalize เดียวกับที่ categorize ใช้กับ merchant จริง) → runtime
+# lookup เป็น dict O(1). _SEED_MAX_TOKENS = เพดานความยาว window (token) ที่ลอง
+# ต่อจุดเริ่มต้นหนึ่งจุด (bounded → แต่ละ dict lookup ยังคง O(1) คงที่ ไม่ scan
+# ทั้ง list).
+# ============================================================
+
+_SEED_LOOKUP: dict[str, str] = {
+    _normalize(k): v for k, v in SEED_MERCHANTS.items() if _normalize(k)
+}
+_SEED_MAX_TOKENS = 4
+
+# Normalize AMBIGUOUS_SEED_KEYS ครั้งเดียวตอน import เหมือน _SEED_LOOKUP (ดู
+# เหตุผลรายตัว + เกณฑ์คัดเข้า/ข้อยกเว้นในคอมเมนต์หัวไฟล์ seed_merchants.py).
+# _seed_lookup() ใช้เซตนี้จำกัด key กำกวมให้ match ได้เฉพาะตอน exact
+# full-string เท่านั้น (ไม่ให้ sliding-window จับตำแหน่งอื่นในสตริง).
+_AMBIGUOUS_SEED_LOOKUP: frozenset[str] = frozenset(
+    _normalize(k) for k in AMBIGUOUS_SEED_KEYS if _normalize(k)
+)
+
+
+def _seed_lookup(m: str) -> str | None:
+    """คืนหมวดจาก seed dictionary ถ้า ``m`` (merchant ที่ normalize แล้ว) ตรงร้านดัง.
+
+    ``m`` ต้องผ่าน ``_normalize`` มาก่อน (เหมือนที่ ``categorize`` ทำ).
+    วิธีจับ 2 ชั้น:
+        1. exact match — dict lookup O(1) กับทั้งสตริง.
+        2. **sliding-window token match** — แบรนด์อาจอยู่ตรงไหนของสตริงก็ได้
+           ไม่ใช่แค่หัว (เช่น "ชำระบิล AIS" ต้องจับ "ais" ที่ index 1 ไม่ใช่
+           index 0) จึงลอง window ที่ **ทุกจุดเริ่มต้น** ในสตริง (ไม่ใช่แค่
+           ``toks[0:n]``) โดยแต่ละจุดเริ่มต้นจำกัดความยาวไว้ที่
+           ``_SEED_MAX_TOKENS`` token แล้วลองยาว→สั้น (เจอยาวสุดที่จุดนั้นแล้ว
+           หยุด ไม่ลองสั้นกว่านี้ที่จุดเดิม — กันจับซ้ำ เช่น "grab" ใน "grab
+           food" ทั้งที่ "grab food" ตรงกว่า).
+           ยังใช้ **dict lookup O(1) ต่อ window เดิม** (ไม่ scan ทั้ง
+           SEED_MERCHANTS) — ต้นทุนรวม = O(จำนวน token ในสตริง ×
+           _SEED_MAX_TOKENS) ซึ่ง bounded และเร็ว (merchant string ปกติสั้น
+           ไม่กี่ token).
+           ถ้าเจอมากกว่า 1 จุดเริ่มต้น → **แมตช์ที่ยาวที่สุดทั้งสตริงชนะ**
+           (ไม่ใช่แค่จุดเริ่มต้นแรกที่เจอ) เพื่อให้แบรนด์เฉพาะเจาะจงกว่าชนะเสมอ
+           ไม่ว่าจะอยู่ตรงไหน — mirror เจตนาเดิมของ longest-first (เช่น
+           "grab food" ชนะ "grab", "bolt food" ชนะ "bolt") แต่ตอนนี้ใช้ได้
+           แม้แบรนด์ไม่ได้อยู่ที่หัวสตริง.
+           การ split ด้วยช่องว่าง (whitespace token) ก็ทำหน้าที่เป็น "ขอบคำ"
+           ในตัวอยู่แล้ว (ไม่ใช่ substring ดิบแบบ `in`) — กัน false positive
+           ที่คำสั้นไปแมตช์กลางคำอื่นโดยบังเอิญ.
+
+           **Ambiguous-key guard** (REW review, 14 ก.ค. 2026): sliding-window
+           เปิดช่องให้ key สั้น/เป็นคำทั่วไป (เช่น "True") จับได้ทุกตำแหน่ง แม้
+           ไม่เกี่ยวกับแบรนด์เลย (เช่น "สถานะ true ปกติ"). Key ที่อยู่ใน
+           ``_AMBIGUOUS_SEED_LOOKUP`` (ดูเกณฑ์คัดเข้าใน seed_merchants.py) จะ
+           ถูก**ข้าม**ในลูป sliding-window นี้เสมอ (ต่อให้เจอ substring ตรงกัน)
+           — ให้ match ได้เฉพาะทาง exact full-string ด้านบนเท่านั้น (สตริง
+           merchant ทั้งหมดตรงกับ key เป๊ะ ไม่มีคำอื่นปนเลย ถือเป็นสัญญาณที่
+           น่าเชื่อถือกว่าการเป็นแค่ส่วนหนึ่งของสตริงยาว).
+           ไม่พบเลย → คืน ``None`` (ให้ไปต่อ regex).
+    """
+    hit = _SEED_LOOKUP.get(m)
+    if hit:
+        return hit
+    toks = m.split(" ")
+    n_toks = len(toks)
+    best_hit: str | None = None
+    best_len = 0
+    for start in range(n_toks):
+        window_cap = min(_SEED_MAX_TOKENS, n_toks - start)
+        for length in range(window_cap, 0, -1):
+            window = " ".join(toks[start:start + length])
+            hit = _SEED_LOOKUP.get(window)
+            if hit:
+                if window in _AMBIGUOUS_SEED_LOOKUP:
+                    # key กำกวม — ไม่ยอมรับ partial match ในลูปนี้ (เคส
+                    # exact full-string ถูกเช็คไปแล้วด้านบนก่อนเข้าลูป) ลอง
+                    # window สั้นกว่าที่จุดเริ่มต้นเดิมต่อ (ไม่ break).
+                    continue
+                if length > best_len:
+                    best_len = length
+                    best_hit = hit
+                # เจอยาวสุดที่จุดเริ่มต้นนี้แล้ว — ข้ามไปจุดเริ่มต้นถัดไป
+                # (ไม่ลองสั้นกว่านี้ที่จุดเดิม กันจับซ้อนกับ window ที่ยาวกว่า).
+                break
+    return best_hit
+
+
 def categorize(merchant: str, _type: str, incoming: bool) -> str:
     """Map a transaction merchant string to one of the 8 fixed categories.
 
@@ -421,6 +519,13 @@ def categorize(merchant: str, _type: str, incoming: bool) -> str:
     m = _normalize(merchant)
     if not m:
         return "other"
+
+    # Seed dictionary layer — ร้านดัง pre-load ชนะ regex, แพ้ MerchantOverride
+    # (override เขียนทับทีหลังตอน insert ใน app.py). ต้องอยู่หลัง income guard
+    # เสมอ (รายการเงินเข้า route "income" ไปแล้ว ไม่ผ่านจุดนี้).
+    seed = _seed_lookup(m)
+    if seed:
+        return seed
 
     for cat, pat in _CATEGORY_RULES:
         if pat.search(m):
