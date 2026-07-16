@@ -221,21 +221,61 @@ def detect_bank(text: str) -> str:
 # Notes:
 #   - Patterns are compiled with re.IGNORECASE; we lowercase + strip extras
 #     before matching so both Thai and English work.
-#   - Use \b boundaries on short English tokens to avoid false positives.
+#   - Use _LB/_RB boundaries on short English tokens to avoid false positives
+#     (see rationale below — NOT plain \b).
 #   - 8-category contract shared with frontend/data.js — DO NOT add/remove
 #     categories here without coordinating with the frontend.
+
+# ------------------------------------------------------------
+# Custom English-only boundary (asymmetric boundary gap fix, 16 ก.ค. 2026)
+# ------------------------------------------------------------
+# Plain `\b` treats Thai script as a Unicode word character in Python's `re`
+# (it isn't ASCII-only), so `\b` right next to Thai text is *inconsistent*:
+# verified by running actual `re.search()` calls (not guessed — see team
+# lesson about not trusting "looks like a boundary bug" without testing):
+#   \bcentral\b vs "CENTRALเวิลด์"     -> NOT matched (เ is a Thai letter = \w)
+#   \btops\b    vs "ซื้อของที่TOPS"     -> matched   (ที่'s last glyph, the ่
+#                                                     tone mark, is a Unicode
+#                                                     *combining mark* — NOT
+#                                                     \w — so a boundary
+#                                                     exists there "by luck")
+#   \btops\b    vs "TOPSมาร์เก็ต"       -> NOT matched (ม is a Thai letter = \w)
+#   \blawson\b  vs "LAWSON108"         -> NOT matched (digits are \w too, in
+#                                                     any regex flavor)
+# So whether an English brand keyword matches next to Thai text depends on
+# the accident of which Thai glyph sits next to it, and digit-glued branch
+# numbers (e.g. "LAWSON108") never match at all. Both are silent "other"
+# fallbacks for real merchant strings — bad for coverage but never crashes
+# (safe fallback contract still holds).
+#
+# Fix: stop relying on \w-based \b entirely for these tokens. Define the
+# boundary ourselves in terms of ASCII letters only. Anything that is NOT
+# an ASCII letter — digit, punctuation, whitespace, or Thai script — now
+# counts as a valid edge on that side, in both directions, consistently.
+# This closes the coverage gap (LAWSON108, CENTRALเวิลด์, TOPSมาร์เก็ต all
+# match now) while still rejecting keyword-inside-another-English-word
+# false positives (e.g. "topspin", "bootstrap", "centralize", "bnhx99")
+# because ASCII-letter-to-ASCII-letter adjacency still blocks the match on
+# that side exactly like \b did. Locked in by the regression suite in
+# test_parser.ipynb §12/§13 (false-positive set + true-positive set +
+# new asymmetric-gap set all pass).
+_LB = r"(?<![a-zA-Z])"  # left edge: previous char must not be an ASCII letter
+_RB = r"(?![a-zA-Z])"   # right edge: next char must not be an ASCII letter
+
 _CATEGORY_RULES: list[tuple[str, re.Pattern]] = [
     # Health & pharmacy (priority over groceries so Watsons/Boots win)
     (
         "health",
         # จับ: ร้านยา/โรงพยาบาล/คลินิก/ประกันสุขภาพ (ทั้งอังกฤษและไทย).
         # ตัวอย่างที่ match: "ร้านยาตัวอย่าง", "คลินิกทันตกรรม", "hospital".
-        # \b = ขอบคำ (word boundary) — กันคำสั้นอังกฤษไปโดนกลางคำอื่นโดยบังเอิญ.
-        # ฝั่งไทยไม่ใส่ \b เพราะอักษรไทยไม่มีขอบคำแบบ ASCII.
+        # _LB/_RB = ขอบคำแบบ ASCII-letter-only (ดูคำอธิบายเต็มด้านบน
+        # _CATEGORY_RULES) — กันคำสั้นอังกฤษไปโดนกลางคำอื่นโดยบังเอิญ (เช่น
+        # "bootstrap") โดยไม่พลาดเคสที่ติดไทย/เลขไม่มีช่องว่าง (เช่น "BOOTSสาขา").
+        # ฝั่งไทยไม่ใส่ boundary เพราะอักษรไทยไม่มีขอบคำแบบ ASCII อยู่แล้ว.
         re.compile(
-            r"\b(watsons?|boots|pharmacy|drug\s*store|hospital|clinic|dental|"
+            _LB + r"(watsons?|boots|pharmacy|drug\s*store|hospital|clinic|dental|"
             r"bumrungrad|samitivej|bnh|bangkok\s*hospital|mahidol|rama|"
-            r"siriraj|chula|aia|allianz|axa|prudential|insurance)\b|"
+            r"siriraj|chula|aia|allianz|axa|prudential|insurance)" + _RB + r"|"
             r"วัตสัน|บูทส์|ร้านยา|ยา\s|โรงพยาบาล|รพ\.|คลินิก|ทันต|"
             r"บำรุงราษฎร์|สมิติเวช|รามา(?:ธิบดี)?|ศิริราช|จุฬา|ประกัน(?:สุขภาพ|ชีวิต)?",
             re.IGNORECASE,
@@ -252,14 +292,14 @@ _CATEGORY_RULES: list[tuple[str, re.Pattern]] = [
         # เฉพาะเมื่อมีคำว่า ร้าน/อาหาร ตามหลัง กัน 7-11 ทั่วไปหลุดมาเป็น food
         # (ปกติ 7-11 ต้องตกหมวด groceries).
         re.compile(
-            r"\b(grab\s*food|grabfood|food\s*panda|foodpanda|line\s*man|lineman|"
+            _LB + r"(grab\s*food|grabfood|food\s*panda|foodpanda|line\s*man|lineman|"
             r"robinhood|bolt\s*food|wongnai|food\s*court|"
             r"starbucks|café|cafe|coffee|amazon|mcdonald'?s?|mcdo|kfc|burger\s*king|"
             r"pizza(?:\s*hut|\s*company)?|sushi|ramen|noodle|"
             r"after\s*you|dessert|bingsu|bakery|donut|krispy|swensen'?s?|"
             r"shabu|sukishi|mk\s*restaurant|mk\s*gold|mk\s*live|hotpot|yakiniku|"
             r"texas\s*chicken|bonchon|chester'?s?|santa\s*fe|s&p|sizzler|"
-            r"smoothie|juice\s*bar)\b|"
+            r"smoothie|juice\s*bar)" + _RB + r"|"
             r"กาแฟ(?:เย็น|สด|ดำ|โบราณ|นม)?|อะเมซอน|อเมซอน|สตาร์บัค|เคเอฟซี|แมค|"
             r"เบเกอรี่|เค้ก|โดนัท|ขนมปัง|บิงซู|ลูกชิ้น|ปิ้งย่าง|"
             r"ร้านอาหาร|อาหาร(?:ตามสั่ง|จานเดียว)?|กระเพรา|กะเพรา|ส้มตำ|"
@@ -287,12 +327,12 @@ _CATEGORY_RULES: list[tuple[str, re.Pattern]] = [
         # grab(?!\s*food) = negative lookahead (?!...) จับ "grab" เฉพาะที่
         # *ไม่* ตามด้วย "food" (คู่กับหมวด food ด้านบนที่ดัก Grab Food ไปแล้ว).
         re.compile(
-            r"\b(grab(?!\s*food)|bolt(?!\s*food)|taxi|uber|gojek|"
+            _LB + r"(grab(?!\s*food)|bolt(?!\s*food)|taxi|uber|gojek|"
             r"bts|mrt|arl|airport\s*rail|skytrain|sky\s*train|expressway|tollway|"
             r"shell|esso|ptt|caltex|bangchak|fuel|gasoline|petrol|"
             r"thai\s*airways|air\s*asia|airasia|nok\s*air|bangkok\s*airways|"
             r"thai\s*smile|thai\s*lion|vietjet|emirates|"
-            r"airline|airways|airport|flight)\b|"
+            r"airline|airways|airport|flight)" + _RB + r"|"
             r"แท็กซี่|รถไฟ(?:ฟ้า)?|รถเมล์|รถตู้|รถทัวร์|วินมอเตอร์ไซค์|"
             r"พีทีที|บางจาก|เชลล์|เอสโซ่|คาลเท็กซ์|น้ำมัน|ปั๊ม(?:น้ำมัน)?|"
             r"ทางด่วน|ค่าทาง|ตั๋วเครื่องบิน|สายการบิน|การบินไทย|แอร์เอเชีย|นกแอร์",
@@ -308,13 +348,13 @@ _CATEGORY_RULES: list[tuple[str, re.Pattern]] = [
         # (?:...)? = non-capturing group + optional เช่น "youtube premium" หรือ
         # "youtube" เฉยๆ ก็ match (?: คือกลุ่มที่ไม่เก็บค่าไว้ ใช้แค่จัดกลุ่ม).
         re.compile(
-            r"\b(netflix|spotify|youtube(?:\s*premium|\s*music)?|disney\+?|"
+            _LB + r"(netflix|spotify|youtube(?:\s*premium|\s*music)?|disney\+?|"
             r"disney\s*plus|hbo|apple\s*music|apple\s*tv|prime\s*video|"
             r"iqiyi|we\s*tv|wetv|viu|joox|tidal|"
             r"major\s*cineplex|major|sf\s*cinema|sfx|sfw|cineplex|cinema|imax|"
             r"steam(?:powered)?|ps\s*store|playstation|psn|nintendo|"
             r"xbox|epic\s*games|garena|riot\s*games|"
-            r"karaoke|concert)\b|"
+            r"karaoke|concert)" + _RB + r"|"
             r"โรงหนัง|โรงภาพยนตร์|เมเจอร์|หนัง|ภาพยนตร์|เกม|คอนเสิร์ต|คาราโอเกะ",
             re.IGNORECASE,
         ),
@@ -327,7 +367,7 @@ _CATEGORY_RULES: list[tuple[str, re.Pattern]] = [
         # ตัวอย่าง: "ค่าไฟฟ้า", "ค่าเช่าหอพัก", "ais fibre", "จ่ายบิล".
         # electric(?:ity)? = จับได้ทั้ง "electric" และ "electricity".
         re.compile(
-            r"\b(rent|electric(?:ity)?\s*bill|water\s*bill|wifi|internet|"
+            _LB + r"(rent|electric(?:ity)?\s*bill|water\s*bill|wifi|internet|"
             r"tot|ais(?:\s*fibre|\s*postpaid|\s*prepaid)?|true(?:move|\s*online|"
             # true(...) บังคับต้องมี suffix เสมอ (ไม่มี "?" ต่อท้ายกลุ่ม) — กัน
             # "true" คำเดี่ยวๆ (บูลีน/สถานะทั่วไป เช่น "สถานะ true ปกติ") หลุดมา
@@ -337,12 +377,11 @@ _CATEGORY_RULES: list[tuple[str, re.Pattern]] = [
             r"\s*vision|\s*id)|dtac|3bb|nt\s*broadband|"
             r"pea|mea|metropolitan\s*electricity|provincial\s*electricity|"
             r"apartment|condo|condominium|dormitory|"
-            r"bill\s*payment|utility|utilities)\b|"
+            r"bill\s*payment|utility|utilities)" + _RB + r"|"
             r"กฟน|กฟภ|การประปา|ประปา|ค่าไฟ(?:ฟ้า)?|ค่าน้ำ|ค่าเช่า|ค่าเน็ต|"
             r"ทรูมูฟ|ทรูออนไลน์|ทรูวิชั่นส์|เอไอเอส|ดีแทค|"
             r"เน็ตบ้าน|นิติบุคคล|ชำระบิล|จ่ายบิล|ค่าก๊าซ|หอพัก|อพาร์ทเมนท์|คอนโด|"
-            r"ค่าธรรมเนียม(?:การ(?:ถอน|โอน|ใช้บริการ))?|"
-            r"\batm\s*fee\b|service\s*charge|ค่าบริการธนาคาร",
+            r"ค่าธรรมเนียม(?:การ(?:ถอน|โอน|ใช้บริการ))?|" + _LB + r"atm\s*fee" + _RB + r"|service\s*charge|ค่าบริการธนาคาร",
             re.IGNORECASE,
         ),
     ),
@@ -355,14 +394,14 @@ _CATEGORY_RULES: list[tuple[str, re.Pattern]] = [
         # 7[-\s]?eleven = ยอมมี "-" หรือช่องว่างคั่นหรือไม่มีก็ได้ (? = 0 หรือ 1 ตัว)
         # → match "7-eleven", "7 eleven", "7eleven".
         re.compile(
-            r"\b(7[-\s]?eleven|7[-\s]11|seven\s*eleven|family\s*mart|familymart|lawson|"
+            _LB + r"(7[-\s]?eleven|7[-\s]11|seven\s*eleven|family\s*mart|familymart|lawson|"
             r"mini\s*big\s*c|"
             r"tops(?:\s*daily|\s*market|\s*super)?|big\s*c|lotus(?:\s*go\s*fresh|"
             r"\s*express|s)?|tesco(?:\s*lotus)?|makro|villa\s*market|"
             r"gourmet\s*market|foodland|home\s*fresh\s*mart|"
             r"cj\s+(?:more|supermarket|axtra|\d{2,})|"
             r"cp\s*fresh\s*mart|cp\s*axtra|cp\s*meiji|cp\s*pork|cp\s*all|"
-            r"market|supermarket|grocery|groceries|minimart)\b|"
+            r"market|supermarket|grocery|groceries|minimart)" + _RB + r"|"
             r"เซเว่น|เซเว่นอีเลฟเว่น|แฟมิลี่มาร์ท|แฟมิลี่|ตลาดสด|ตลาดนัด|"
             r"ซูเปอร์มาร์เก็ต|มินิมาร์ท|แม็คโคร|ท็อปส์|โลตัส|บิ๊กซี|วิลล่า|กูร์เมต์",
             re.IGNORECASE,
@@ -377,7 +416,7 @@ _CATEGORY_RULES: list[tuple[str, re.Pattern]] = [
         # เป็น rule ท้ายสุด (คำ generic สุด เช่น mall/store/ร้านค้า) จึงต้องอยู่
         # หลัง groceries ที่เฉพาะเจาะจงกว่า — ไม่งั้นจะกลืนร้านสะดวกซื้อไปหมด.
         re.compile(
-            r"\b(shopee|lazada|jd\s*central|kaidee|amazon(?:\.com)?|aliexpress|"
+            _LB + r"(shopee|lazada|jd\s*central|kaidee|amazon(?:\.com)?|aliexpress|"
             r"uniqlo|h&m|zara|muji|nike|adidas|puma|new\s*balance|"
             r"central(?:world|\s*world|\s*plaza|\s*department)?|robinson|"
             r"emporium|emquartier|emsphere|paragon|siam\s*paragon|terminal\s*21|"
@@ -385,7 +424,7 @@ _CATEGORY_RULES: list[tuple[str, re.Pattern]] = [
             r"ikea|home\s*pro|homepro|do\s*home|dohome|index\s*living|"
             r"power\s*buy|j\.?\s*i\.?\s*b|jaymart|advice|banana\s*it|"
             r"daiso|miniso|loft|"
-            r"mall|plaza|store|department|outlet|boutique)\b|"
+            r"mall|plaza|store|department|outlet|boutique)" + _RB + r"|"
             r"ช้อปปี้|ลาซาด้า|ห้าง(?:สรรพสินค้า)?|เซ็นทรัล|โรบินสัน|พารากอน|"
             r"เอ็มควอเทียร์|ไอคอนสยาม|โฮมโปร|โดโฮม|พาวเวอร์บาย|"
             r"ร้านค้า|ร้านขาย",
