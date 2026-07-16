@@ -1,0 +1,75 @@
+name: Grace Period Cleanup Cron
+
+# External safety-net cron for the 30-day hard-delete grace period.
+#
+# The app already runs a "lazy cleanup on login" pattern (see
+# backend/app.py::_maybe_run_auto_cleanup, called after /api/auth/login).
+# That pattern has a known gap: if nobody logs in for 30+ days, expired
+# accounts never get purged (see CLAUDE.md backlog). This workflow calls
+# the same cleanup via POST /api/admin/run-grace-cleanup every 24h so
+# expired accounts are purged "without undue delay" even with zero traffic.
+#
+# This does NOT replace the lazy-on-login cleanup — both run independently
+# and the underlying DELETE query is idempotent (filters on
+# delete_scheduled_at < utcnow()), so running it twice in the same day
+# from two different triggers is harmless.
+#
+# Requires a repo secret named ADMIN_CLEANUP_TOKEN matching the
+# ADMIN_CLEANUP_TOKEN env var set on Render. If that secret (or the Render
+# env var) is unset/mismatched, the endpoint returns 404/403 and this job
+# will fail loudly in the Actions tab — that's intentional, it's the alert.
+
+on:
+  schedule:
+    # 19:00 UTC = 02:00 Asia/Bangkok (UTC+7) — low-traffic window.
+    - cron: "0 19 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  run-grace-cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call /api/admin/run-grace-cleanup
+        env:
+          ADMIN_CLEANUP_TOKEN: ${{ secrets.ADMIN_CLEANUP_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${ADMIN_CLEANUP_TOKEN:-}" ]; then
+            echo "::error::ADMIN_CLEANUP_TOKEN secret is not set in this repo — see Settings > Secrets and variables > Actions"
+            exit 1
+          fi
+
+          URL="https://moneymind-team-04-sprint3.onrender.com/api/admin/run-grace-cleanup?token=${ADMIN_CLEANUP_TOKEN}"
+
+          # Render Free tier cold-starts (30-60s) after ~15min idle.
+          # Retry a few times with backoff before giving up, so a cold
+          # start alone doesn't fail the whole job.
+          max_attempts=4
+          attempt=1
+          until [ "$attempt" -gt "$max_attempts" ]; do
+            echo "Attempt $attempt/$max_attempts..."
+
+            http_status=$(curl -sS -o /tmp/cleanup_response.json -w "%{http_code}" \
+              --max-time 90 \
+              -X POST "$URL") || http_status="000"
+
+            echo "HTTP status: $http_status"
+            echo "Response body:"
+            cat /tmp/cleanup_response.json 2>/dev/null || echo "(no body)"
+            echo
+
+            if [ "$http_status" = "200" ]; then
+              echo "Grace cleanup triggered successfully."
+              exit 0
+            fi
+
+            attempt=$((attempt + 1))
+            if [ "$attempt" -le "$max_attempts" ]; then
+              echo "Retrying in 20s (likely cold-start or transient error)..."
+              sleep 20
+            fi
+          done
+
+          echo "::error::Grace cleanup endpoint did not return 200 after $max_attempts attempts (last status: $http_status)"
+          exit 1
