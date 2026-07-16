@@ -938,14 +938,102 @@ def _normalize_merchant(m) -> str:
     return _WS_RE.sub(" ", str(m).strip().lower())
 
 
+# คำนำหน้าทั่วไปที่ parser เอง (logic_ai/pdf_parser.py::_scb_merchant และเพื่อน)
+# ใส่ไว้เป็น "label" ของธุรกรรมโอน/บิล/เติมเงิน — ไม่ใช่ชื่อแบรนด์ (เช่น
+# "จ่ายบิล วัตสัน" / "รับโอนจาก KBANK x1234 สมชาย"). ถ้าเอา token แรกของ
+# สตริงเหล่านี้มาเป็น "brand key" ตรงๆ โดยไม่กันไว้ จะเสี่ยงจับผิดข้ามร้าน/
+# ข้ามคนที่ไม่เกี่ยวกันเลย เพราะ label พวกนี้ใช้ร่วมกันได้กับหลายรายการ
+# (เช่น "จ่ายบิล วัตสัน" กับ "จ่ายบิล AIS" ใช้ label เดียวกันแต่คนละร้าน).
+# กันไว้ตรงนี้ = ห้าม token พวกนี้เป็น brand key เด็ดขาด (ยังคง exact match
+# ทำงานได้ปกติ — กระทบแค่ fuzzy fallback ชั้นใหม่).
+_GENERIC_MERCHANT_PREFIXES: frozenset[str] = frozenset({
+    "จ่ายบิล", "รับโอน", "รับโอนจาก", "โอนไป", "เติมเงิน",
+    "ชำระเงิน", "ธุรกรรม", "ดอกเบี้ย", "pay", "transfer",
+})
+
+
+def _brand_key(merchant_norm: str) -> str:
+    """ดึง "แบรนด์คร่าวๆ" ออกจาก merchant string ที่ normalize แล้ว (fuzzy match).
+
+    Derive a coarse "brand key" from an already-normalised merchant string —
+    used as a fuzzy fallback so an override taught on one order/detail
+    generalises to the same brand seen with different trailing item-detail
+    text (e.g. ``"7-11 ซื้อขนม"`` teaches the brand key ``"7-11"``, which then
+    also matches ``"7-11 ซื้อกาแฟ"``).
+
+    ใช้ token แรก (แยกด้วยช่องว่าง) เป็น key เพราะสตริง merchant ของการซื้อ
+    ผ่านบัตร/POS/subscription มักขึ้นต้นด้วยชื่อแบรนด์ก่อนรายละเอียดต่อท้าย
+    (ตรงข้ามกับสาย transfer/bill ที่ label ทั่วไปขึ้นก่อน — กันไว้ด้วย
+    ``_GENERIC_MERCHANT_PREFIXES`` ด้านบน).
+
+    Returns ``""`` (= "ไม่ใช้เป็น brand key") เมื่อ:
+      * สตริงว่าง
+      * token แรกสั้นกว่า 2 ตัวอักษร (เสี่ยง false-positive สูง)
+      * token แรกเป็นตัวเลขล้วน (เลขอ้างอิง/บัญชี ไม่ใช่ชื่อแบรนด์)
+      * token แรกอยู่ใน ``_GENERIC_MERCHANT_PREFIXES``
+    """
+    if not merchant_norm:
+        return ""
+    first = merchant_norm.split(" ", 1)[0]
+    if len(first) < 2 or first.isdigit() or first in _GENERIC_MERCHANT_PREFIXES:
+        return ""
+    return first
+
+
+def _build_override_maps(rows) -> tuple[dict[str, str], dict[str, str | None]]:
+    """สร้าง 2 mapping จากแถว MerchantOverride: exact match + fuzzy brand-key.
+
+    Build the exact-match and brand-key fuzzy-fallback maps from a list of
+    ``(merchant_norm, category)`` rows. Pulled out of ``_apply_overrides`` as
+    a pure function (no DB access) so it's unit-testable without a session.
+
+    ``exact_map``: ``{merchant_norm: category}`` — unaffected by this change,
+    same behaviour as before (each merchant_norm is unique per user thanks to
+    the ``UniqueConstraint``, so this is a straight 1:1 copy).
+
+    ``brand_map``: ``{brand_key: category | None}``. When two different
+    overrides share a brand key but disagree on category (e.g. user taught
+    ``"7-11 ซื้อขนม"`` → food *and* ``"7-11 ซื้อยา"`` → health), the key is
+    marked ``None`` — a conflict marker that disables the fuzzy fallback for
+    that brand key entirely (exact match on the two taught strings still
+    works fine; we simply refuse to *guess* which category a new, unseen
+    "7-11 ..." string should get). This is self-healing: the moment the user
+    teaches a conflicting category under the same brand, future imports stop
+    fuzzy-generalising that brand automatically — no code change needed.
+    """
+    exact_map: dict[str, str] = {}
+    brand_map: dict[str, str | None] = {}
+    for norm, cat in rows:
+        exact_map[norm] = cat
+        key = _brand_key(norm)
+        if not key:
+            continue
+        if key not in brand_map:
+            brand_map[key] = cat
+        elif brand_map[key] != cat:
+            brand_map[key] = None  # conflict → disable fuzzy fallback for this key
+    return exact_map, brand_map
+
+
 def _apply_overrides(db, user_id: int, txs: list[dict]) -> list[dict]:
     """จัดหมวดใหม่ให้ tx ที่ merchant ตรงกับ override ที่ user เคยสอนไว้ (Learning Loop).
 
     Re-categorise tx dicts whose merchant matches a saved override.
 
+    Matching มี 2 ชั้น เรียงลำดับความสำคัญ:
+      1. **Exact match** (merchant_norm เป๊ะ) — พฤติกรรมเดิม ไม่เปลี่ยน
+      2. **Brand-key fuzzy fallback** (query-time only, ไม่แตะ DB schema) —
+         แก้ backlog "Learning Loop fuzzy match": ร้านเดียวกันแต่ item detail
+         ต่างกัน (เช่น ``"7-11 ซื้อขนม"`` ที่เคยสอนไว้ ครอบคลุมถึง
+         ``"7-11 ซื้อกาแฟ"`` ที่ยังไม่เคยสอนด้วย) ดู ``_brand_key`` +
+         ``_build_override_maps`` สำหรับ guard ทั้งหมด (generic-prefix
+         blocklist + conflict self-heal)
+
     Mutates each tx dict in place (setting ``tx['category']``) and returns
     the same list for chaining. Uses a single indexed query on
-    ``MerchantOverride.user_id`` — O(N + M) for N overrides + M txs, no N+1.
+    ``MerchantOverride.user_id`` — O(N + M) for N overrides + M txs, no N+1
+    (brand_map is built from the same already-loaded rows in memory — no
+    extra query, no per-tx similarity scan).
 
     Called BEFORE dedup at every insert site so the categories that land
     in the DB already reflect the user's learned preferences. Safe no-op
@@ -960,11 +1048,19 @@ def _apply_overrides(db, user_id: int, txs: list[dict]) -> list[dict]:
     )
     if not rows:
         return txs
-    mapping = {norm: cat for norm, cat in rows}
+    exact_map, brand_map = _build_override_maps(rows)
     for tx in txs:
         norm = _normalize_merchant(tx.get("merchant"))
-        if norm and norm in mapping:
-            tx["category"] = mapping[norm]
+        if not norm:
+            continue
+        if norm in exact_map:
+            tx["category"] = exact_map[norm]
+            continue
+        key = _brand_key(norm)
+        if key:
+            fuzzy_cat = brand_map.get(key)
+            if fuzzy_cat:
+                tx["category"] = fuzzy_cat
     return txs
 
 
